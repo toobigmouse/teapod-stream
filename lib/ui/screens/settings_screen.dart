@@ -20,7 +20,7 @@ import '../../providers/profile_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/settings_shared.dart';
-import 'split_tunnel_screen.dart';
+// Split tunnel screen removed
 
 // ── Screen ────────────────────────────────────────────────────────
 
@@ -679,31 +679,8 @@ class _SettingsBodyState extends State<_SettingsBody> {
             onTap: locked ? null : () => Navigator.push(
                 context, MaterialPageRoute(builder: (_) => const RoutingScreen())),
           ),
-          _RowToggle(
-            t: t,
-            title: 'Сплит-туннелирование',
-            hint: s.vpnMode == VpnMode.onlySelected
-                ? 'Только выбранные приложения через VPN'
-                : 'Выбранные приложения исключены из VPN',
-            value: s.splitTunnelingEnabled,
-            locked: locked,
-            onChange: (v) => widget.onUpdate(s.copyWith(splitTunnelingEnabled: v)),
-          ),
-          if (s.splitTunnelingEnabled)
-            _RowChev(
-              t: t,
-              title: 'Выбрать приложения',
-              hint: s.vpnMode == VpnMode.onlySelected
-                  ? '${s.includedPackages.length} выбрано'
-                  : '${s.excludedPackages.length} исключено',
-              locked: locked,
-              last: true,
-              onTap: locked ? null : () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const SplitTunnelScreen())),
-            )
-          else
-            SizedBox(height: 1,
-                child: Container(color: t.line)),
+          SizedBox(height: 1,
+              child: Container(color: t.line)),
 
           // ── 0x50 ABOUT ────────────────────────────────────────
           SetSectionHeader(t: t, addr: '0x50', label: 'about'),

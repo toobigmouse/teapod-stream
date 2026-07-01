@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -46,14 +47,15 @@ class _AddConfigScreenState extends ConsumerState<AddConfigScreen> {
                 children: [
                   Text('teapod.stream // add',
                       style: AppTheme.mono(size: 10, color: t.textMuted, letterSpacing: 1)),
-                  GestureDetector(
-                    onTap: _openQrScan,
-                    child: Container(
-                      width: 28, height: 28,
-                      decoration: BoxDecoration(border: Border.all(color: t.line)),
-                      child: Icon(Icons.qr_code_scanner_rounded, size: 14, color: t.textDim),
+                  if (!Platform.isWindows)
+                    GestureDetector(
+                      onTap: _openQrScan,
+                      child: Container(
+                        width: 28, height: 28,
+                        decoration: BoxDecoration(border: Border.all(color: t.line)),
+                        child: Icon(Icons.qr_code_scanner_rounded, size: 14, color: t.textDim),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

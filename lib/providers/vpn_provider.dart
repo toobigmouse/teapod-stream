@@ -426,22 +426,14 @@ class VpnNotifier extends Notifier<VpnState2> {
       httpPort: 0,
       socksUser: socksCredentials.user,
       socksPassword: socksCredentials.password,
-      excludedPackages: settings.splitTunnelingEnabled
-          ? (settings.vpnMode == VpnMode.allExcept
-              ? settings.excludedPackages
-              : <String>{})
-          : {},
-      includedPackages: settings.splitTunnelingEnabled
-          ? (settings.vpnMode == VpnMode.onlySelected
-              ? settings.includedPackages
-              : <String>{})
-          : {},
+      excludedPackages: {},
+      includedPackages: {},
       logLevel: settings.logLevel,
       enableUdp: settings.enableUdp,
       allowIcmp: settings.allowIcmp,
       dnsMode: settings.dnsMode,
       dnsServer: settings.dnsServer,
-      vpnMode: settings.splitTunnelingEnabled ? settings.vpnMode : VpnMode.allExcept,
+      vpnMode: VpnMode.allExcept,
       proxyOnly: settings.proxyOnly,
       showNotification: settings.showNotification,
       killSwitch: settings.killSwitchEnabled,
