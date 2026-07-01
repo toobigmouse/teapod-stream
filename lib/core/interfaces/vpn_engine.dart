@@ -1,3 +1,4 @@
+import 'dart:math';
 import '../models/vpn_config.dart';
 import '../models/vpn_log_entry.dart';
 import '../models/dns_config.dart';
@@ -7,6 +8,14 @@ import '../services/settings_service.dart';
 /// blocked — kill switch удерживает TUN-sink после обрыва: трафик заблокирован.
 enum VpnState { disconnected, connecting, connected, disconnecting, error, blocked }
 
+({String user, String password}) generateSocksCredentials() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  final rng = Random.secure();
+  String randomString(int len) =>
+      List.generate(len, (_) => chars[rng.nextInt(chars.length)]).join();
+  return (user: 'u${randomString(8)}', password: randomString(24));
+}
+
 abstract class VpnEngine {
   String get protocolName;
 
@@ -15,6 +24,14 @@ abstract class VpnEngine {
 
   Future<int?> pingConfig(VpnConfig config);
   bool supportsConfig(VpnConfig config);
+
+  Future<Map<String, String>> getBinaryVersions();
+  Future<({VpnState state, int socksPort, String socksUser, String socksPassword, int connectedAtMs})> getVpnState();
+  Future<String?> getLogFilePath();
+  Future<List<VpnLogEntry>> getLogs();
+  Future<void> clearLogs();
+  Future<({int upload, int download, int uploadSpeed, int downloadSpeed})> getStats();
+  Future<List<Map<String, int>>> getStatsHistory();
 }
 
 class VpnEngineOptions {

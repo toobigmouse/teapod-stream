@@ -1,0 +1,275 @@
+name: Windows MSIX Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: 'Target architecture'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - x64
+          - arm64
+
+env:
+  FLUTTER_VERSION: '3.38.9'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        architecture: ${{ github.event.inputs.architecture == 'all' || github.event.inputs.architecture == '' && fromJSON('["x64", "arm64"]') || fromJSON(format('["{0}"]', github.event.inputs.architecture)) }}
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Download xray-core (${{ matrix.architecture }})
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.architecture }}"
+          $xrayVersion = "1.8.24"
+
+          if ($arch -eq "arm64") {
+            $url = "https://github.com/XTLS/Xray-core/releases/download/v${xrayVersion}/Xray-windows-arm64-v8a.zip"
+          } else {
+            $url = "https://github.com/XTLS/Xray-core/releases/download/v${xrayVersion}/Xray-windows-64.zip"
+          }
+
+          Write-Host "Downloading xray-core from: $url"
+          Invoke-WebRequest -Uri $url -OutFile xray.zip
+          Expand-Archive -Path xray.zip -DestinationPath xray_temp -Force
+
+          $destDir = "assets/binaries"
+          if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+          # Copy xray.exe
+          Copy-Item -Path "xray_temp/xray.exe" -Destination "$destDir/xray.exe" -Force
+
+          # Copy geo files
+          if (Test-Path "xray_temp/geoip.dat") {
+            Copy-Item -Path "xray_temp/geoip.dat" -Destination "$destDir/geoip.dat" -Force
+          }
+          if (Test-Path "xray_temp/geosite.dat") {
+            Copy-Item -Path "xray_temp/geosite.dat" -Destination "$destDir/geosite.dat" -Force
+          }
+
+          Write-Host "xray-core files copied to $destDir"
+          Remove-Item -Path xray.zip -Force
+          Remove-Item -Path xray_temp -Recurse -Force
+
+      - name: Download wintun (${{ matrix.architecture }})
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.architecture }}"
+          $wintunVersion = "0.14.1"
+
+          if ($arch -eq "arm64") {
+            $url = "https://www.wintun.net/builds/wintun-${wintunVersion}-arm64.zip"
+          } else {
+            $url = "https://www.wintun.net/builds/wintun-${wintunVersion}-amd64.zip"
+          }
+
+          Write-Host "Downloading wintun from: $url"
+          Invoke-WebRequest -Uri $url -OutFile wintun.zip
+          Expand-Archive -Path wintun.zip -DestinationPath wintun_temp -Force
+
+          $destDir = "assets/binaries"
+          if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+          Copy-Item -Path "wintun/bin/wintun.dll" -Destination "$destDir/wintun.dll" -Force
+
+          Write-Host "wintun.dll copied to $destDir"
+          Remove-Item -Path wintun.zip -Force
+          Remove-Item -Path wintun_temp -Recurse -Force
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Generate icons
+        shell: pwsh
+        run: |
+          python -c "
+          from PIL import Image
+          import os
+
+          ico_path = 'windows/runner/resources/app_icon.ico'
+          images_dir = 'windows/packaging/images'
+          os.makedirs(images_dir, exist_ok=True)
+
+          icon = Image.open(ico_path)
+          required_icons = {
+              'Square44x44Logo.png': 44,
+              'Square71x71Logo.png': 71,
+              'Square150x150Logo.png': 150,
+              'Square310x310Logo.png': 310,
+              'Square310x310Logo.targetsize-240_scale-100.png': 310,
+              'StoreLogo.png': 50,
+              'Wide310x150Logo.png': 310,
+              'SplashScreen.png': 620,
+          }
+          for name, size in required_icons.items():
+              resized = icon.resize((size, size), Image.Resampling.LANCZOS)
+              if resized.mode != 'RGBA':
+                  resized = resized.convert('RGBA')
+              resized.save(os.path.join(images_dir, name))
+              print(f'Generated {name}')
+          "
+
+      - name: Get version
+        id: version
+        shell: pwsh
+        run: |
+          $content = Get-Content "pubspec.yaml" -Raw
+          if ($content -match 'version:\s+(\d+\.\d+\.\d+)\+(\d+)') {
+            $version = $Matches[1]
+            $buildNumber = $Matches[2]
+            echo "version=$version" >> $env:GITHUB_OUTPUT
+            echo "build_number=$buildNumber" >> $env:GITHUB_OUTPUT
+            echo "msix_version=$version.0" >> $env:GITHUB_OUTPUT
+            Write-Host "Version: $version (build $buildNumber)"
+          }
+
+      - name: Update AppxManifest version
+        shell: pwsh
+        run: |
+          $msixVersion = "${{ steps.version.outputs.msix_version }}"
+          $content = Get-Content "windows/packaging/AppxManifest.xml" -Raw
+          $content = $content -replace '(<Identity[^>]*Version=")[\d.]+(")', "`${1}$msixVersion`${2}"
+          Set-Content -Path "windows/packaging/AppxManifest.xml" -Value $content -Encoding UTF8
+          Write-Host "Version set to $msixVersion"
+
+      - name: Create MSIX
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.architecture }}"
+          $version = "${{ steps.version.outputs.version }}"
+
+          # Setup staging
+          $stagingDir = "build/msix/staging_$arch"
+          New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+
+          # Copy build output
+          Copy-Item -Path "build/windows/x64/runner/Release/*" -Destination $stagingDir -Recurse -Force
+
+          # Copy manifest and images
+          Copy-Item -Path "windows/packaging/AppxManifest.xml" -Destination $stagingDir -Force
+          New-Item -ItemType Directory -Path "$stagingDir/images" -Force | Out-Null
+          Copy-Item -Path "windows/packaging/images/*" -Destination "$stagingDir/images" -Recurse -Force
+
+          # Create MSIX
+          $msixFile = "build/msix/TeapodStream-$arch-$version.msix"
+          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\MakeAppx.exe" pack /d $stagingDir /p $msixFile /o
+          if ($LASTEXITCODE -ne 0) { throw "MakeAppx pack failed" }
+
+          Write-Host "MSIX created: $msixFile"
+
+          # Cleanup staging
+          Remove-Item -Path $stagingDir -Recurse -Force
+
+      - name: Sign MSIX
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.architecture }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $msixFile = "build/msix/TeapodStream-$arch-$version.msix"
+
+          # Generate self-signed cert
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=TeapodStream" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -NotAfter (Get-Date).AddYears(5) `
+            -FriendlyName "TeapodStream Code Signing"
+
+          $thumbprint = $cert.Thumbprint
+          $pfxPath = "build/msix/teapodstream_dev.pfx"
+          $pfxPass = ConvertTo-SecureString -String "teapodstream" -Force -AsPlainText
+          Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$thumbprint" -FilePath $pfxPath -Password $pfxPass | Out-Null
+
+          # Sign
+          $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfxPath /p "teapodstream" $msixFile
+          if ($LASTEXITCODE -ne 0) { throw "SignTool sign failed" }
+
+          Write-Host "MSIX signed: $msixFile"
+
+      - name: Generate .appinstaller
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.architecture }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $msixVersion = "${{ steps.version.outputs.msix_version }}"
+
+          $appInstallerXml = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <AppInstaller
+            xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+            xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+            Version="$msixVersion">
+            <UpdateSettings>
+              <OnLaunch HoursBetweenUpdateChecks="4" />
+              <AutomaticBackgroundTask />
+              <ForceApplicationShutdown>false</ForceApplicationShutdown>
+            </UpdateSettings>
+            <MainBundle
+              Name="TeapodStream"
+              Publisher="CN=TeapodStream"
+              Uri="https://github.com/${{ github.repository }}/releases/download/v$version/TeapodStream-$arch-$version.msix" />
+          </AppInstaller>
+          "@
+
+          $appInstallerPath = "build/msix/TeapodStream-$arch.appinstaller"
+          Set-Content -Path $appInstallerPath -Value $appInstallerXml -Encoding UTF8
+          Write-Host "AppInstaller: $appInstallerPath"
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeapodStream-${{ matrix.architecture }}
+          path: |
+            build/msix/TeapodStream-${{ matrix.architecture }}-*.msix
+            build/msix/TeapodStream-${{ matrix.architecture }}.appinstaller
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/TeapodStream-x64/TeapodStream-x64-*.msix
+            artifacts/TeapodStream-x64/TeapodStream-x64.appinstaller
+            artifacts/TeapodStream-arm64/TeapodStream-arm64-*.msix
+            artifacts/TeapodStream-arm64/TeapodStream-arm64.appinstaller
+          generate_release_notes: true
+          draft: false
+          prerelease: false

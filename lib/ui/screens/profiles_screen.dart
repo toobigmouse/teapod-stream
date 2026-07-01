@@ -35,8 +35,18 @@ class ProfilesScreen extends ConsumerWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('teapod.stream // profiles',
-                      style: AppTheme.mono(size: 10, color: t.textMuted, letterSpacing: 1)),
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Icon(Icons.arrow_back_rounded,
+                            size: 14, color: t.accent),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('teapod.stream // profiles',
+                          style: AppTheme.mono(size: 10, color: t.textMuted, letterSpacing: 1)),
+                    ],
+                  ),
                   profileAsync.maybeWhen(
                     data: (s) => Text(
                       'profiles [${s.profiles.length.toString().padLeft(2, '0')}]',

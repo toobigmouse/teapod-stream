@@ -59,6 +59,10 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> checkForUpdate() async {
+    if (Platform.isWindows) {
+      state = UpdateError('Обновления для Windows будут через MSIX Store');
+      return;
+    }
     state = UpdateChecking();
     try {
       final pkgInfo = await PackageInfo.fromPlatform();
@@ -94,6 +98,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> reinstall(UpdateInfo info) async {
+    if (Platform.isWindows) return;
     final abi = await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
     final path = await _apkPath(info.version, abi);
     if (File(path).existsSync()) await File(path).delete();
@@ -101,6 +106,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> startDownload(UpdateInfo info) async {
+    if (Platform.isWindows) return;
     final abi = await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
     final path = await _apkPath(info.version, abi);
     _currentApkPath = path;
@@ -142,6 +148,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> installApk(String filePath) async {
+    if (Platform.isWindows) return;
     try {
       await _channel.invokeMethod<void>('installApk', {'filePath': filePath});
       await _cleanOldApks(keepPath: filePath);

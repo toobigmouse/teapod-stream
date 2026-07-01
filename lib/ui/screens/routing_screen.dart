@@ -25,6 +25,15 @@ class RoutingScreen extends ConsumerWidget {
     final geoMissing    = ref.watch(geoProvider) is GeoMissing;
 
     return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+          tooltip: 'Назад',
+        ),
+        title: const Text('Маршрутизация'),
+        centerTitle: true,
+      ),
       body: SafeArea(
         child: settingsAsync.when(
           loading: () {

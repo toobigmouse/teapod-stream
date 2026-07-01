@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/routing_settings.dart';
+import '../../core/interfaces/vpn_engine.dart';
 import '../../core/models/vpn_stats.dart';
 import '../../providers/vpn_provider.dart';
 import '../../providers/config_provider.dart';
@@ -225,6 +226,7 @@ class _StateInfo extends ConsumerWidget {
     final isConnecting    = vpnState.isConnecting;
     final isDisconnecting = vpnState.isDisconnecting;
     final isBlocked       = vpnState.isBlocked;
+    final isError         = vpnState.connectionState == VpnState.error;
     final ipAsync         = ref.watch(ipInfoProvider);
     final hasConfig       = ref.watch(effectiveConfigProvider) != null;
 
@@ -232,24 +234,28 @@ class _StateInfo extends ConsumerWidget {
         ? 'BLOCKED'
         : isConn
             ? 'ONLINE'
-            : (isConnecting ? 'HANDSHAKE' : (isDisconnecting ? 'SHUTDOWN' : 'OFFLINE'));
-    final stateColor = isBlocked ? t.danger : (isConn ? t.accent : t.textDim);
+            : (isConnecting ? 'HANDSHAKE' : (isDisconnecting ? 'SHUTDOWN' : (isError ? 'ERROR' : 'OFFLINE')));
+    final stateColor = isBlocked ? t.danger : (isConn ? t.accent : (isError ? t.danger : t.textDim));
 
-    String subtitle;
-    if (isBlocked) {
-      subtitle = 'kill switch · трафик заблокирован';
-    } else if (isConn) {
-      final ipStr = ipAsync.maybeWhen(data: (d) => d?.ip, orElse: () => null) ?? '—';
-      final cc    = ipAsync.maybeWhen(data: (d) => d?.countryCode.toLowerCase(), orElse: () => null) ?? '—';
-      subtitle = pingMs != null ? '${pingMs}ms · $cc · $ipStr' : '$cc · $ipStr';
-    } else if (isConnecting) {
-      subtitle = 'установка соединения…';
-    } else if (isDisconnecting) {
-      subtitle = 'завершение сеанса…';
-    } else if (!hasConfig) {
-      subtitle = 'нет конфигурации — добавьте';
-    } else {
-      subtitle = 'нажмите для подключения';
+    Widget buildSubtitle() {
+      if (isBlocked) {
+        return Text('kill switch · трафик заблокирован', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isConn) {
+        final ipStr = ipAsync.maybeWhen(data: (d) => d?.ip, orElse: () => null) ?? '—';
+        final cc    = ipAsync.maybeWhen(data: (d) => d?.countryCode.toLowerCase(), orElse: () => null) ?? '—';
+        final pingStr = pingMs != null ? '${pingMs}ms' : '—ms';
+        return Text('$pingStr · $cc · $ipStr', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isConnecting) {
+        return Text('установка соединения…', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isDisconnecting) {
+        return Text('завершение сеанса…', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isError) {
+        return Text(vpnState.error ?? 'Unknown error', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (!hasConfig) {
+        return Text('нет конфигурации — добавьте', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else {
+        return Text('нажмите для подключения', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      }
     }
 
     return Column(
@@ -262,8 +268,7 @@ class _StateInfo extends ConsumerWidget {
             color: stateColor, letterSpacing: -1, height: 1),
         ),
         const SizedBox(height: 6),
-        Text(subtitle,
-            style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5)),
+        buildSubtitle(),
         if (isBlocked) ...[
           const SizedBox(height: 10),
           GestureDetector(

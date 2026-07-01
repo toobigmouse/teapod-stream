@@ -70,10 +70,17 @@ class ConfigNotifier extends AsyncNotifier<ConfigState> {
   @override
   Future<ConfigState> build() async {
     final configs = await storage.loadConfigs();
-    final activeId = await storage.loadActiveConfigId();
+    var activeId = await storage.loadActiveConfigId();
     final activeSubId = await storage.loadActiveSubscriptionId();
     final subs = await storage.loadSubscriptions();
     final pins = await storage.loadPins();
+
+    // Auto-select if no active config but configs exist
+    if (activeId == null && configs.isNotEmpty) {
+      activeId = configs.first.id;
+      await storage.saveActiveConfigId(activeId);
+    }
+
     return ConfigState(configs: configs, activeConfigId: activeId, activeSubscriptionId: activeSubId, subscriptions: subs, pins: pins);
   }
 

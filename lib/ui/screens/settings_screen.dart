@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../protocols/xray/windows_xray_engine.dart';
 import '../../providers/app_info_provider.dart';
 import '../../providers/update_provider.dart';
 import '../../core/constants/app_constants.dart';
@@ -41,12 +43,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _loadBinaryVersions() async {
     try {
-      const channel = MethodChannel(AppConstants.methodChannel);
-      final result = await channel.invokeMethod<Map>('getBinaryVersions');
-      if (result != null && mounted) {
-        setState(() {
-          _xrayVersion = result['xray'] ?? '—';
-        });
+      if (Platform.isWindows) {
+        final wx = WindowsXrayEngine();
+        final versions = await wx.getBinaryVersions();
+        if (mounted) { setState(() {
+          _xrayVersion = versions['xray'] ?? '—';
+        }); }
+      } else {
+        const channel = MethodChannel(AppConstants.methodChannel);
+        final result = await channel.invokeMethod<Map>('getBinaryVersions');
+        if (result != null && mounted) {
+          setState(() {
+            _xrayVersion = result['xray'] ?? '—';
+          });
+        }
       }
     } catch (_) {
       if (mounted) setState(() { _xrayVersion = '—'; });
@@ -532,6 +542,12 @@ class _SettingsBodyState extends State<_SettingsBody> {
           const SizedBox(height: 32),
         ],
       ),
+      if (locked)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Container(color: t.bg.withValues(alpha: 0)),
+          ),
+        ),
       ],
     );
   }
@@ -674,6 +690,32 @@ class _AppearanceRows extends ConsumerWidget {
                   onChanged: (v) {
                     final scale = v == 'large' ? FontScale.large : FontScale.normal;
                     ref.read(settingsProvider.notifier).save(settings.copyWith(fontScale: scale));
+                  },
+                ),
+            ],
+          ),
+        ),
+        // Tab bar position
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.lineSoft))),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Положение меню', style: AppTheme.sans(size: 14, color: t.text)),
+              if (settings != null)
+                _SegSquare(
+                  t: t,
+                  value: settings.tabBarPosition == TabBarPosition.bottom
+                      ? 'bottom'
+                      : settings.tabBarPosition == TabBarPosition.left
+                          ? 'left' : 'right',
+                  opts: const [('bottom', 'НИЗ'), ('left', 'ЛЕВО'), ('right', 'ПРАВО')],
+                  locked: false,
+                  onChanged: (v) {
+                    final pos = v == 'bottom' ? TabBarPosition.bottom
+                        : v == 'left' ? TabBarPosition.left : TabBarPosition.right;
+                    ref.read(settingsProvider.notifier).save(settings.copyWith(tabBarPosition: pos));
                   },
                 ),
             ],

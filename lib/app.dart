@@ -17,6 +17,8 @@ import 'providers/update_provider.dart';
 import 'providers/geo_provider.dart';
 import 'providers/theme_provider.dart';
 import 'core/services/deeplink_handler.dart';
+import 'core/services/tray_manager.dart';
+import 'core/services/app_logger.dart';
 
 /// Индекс активной вкладки. Отдельный provider, чтобы экраны
 /// (например, Home при пустом списке конфигов) могли переключать вкладку.
@@ -163,11 +165,21 @@ class _AppShellState extends ConsumerState<_AppShell>
         data: (d) => d.configs.map((c) => c.id).toSet(),
         orElse: () => null,
       );
+      // Ping on initial config load (prev was null/loading, now has data)
+      if (prevIds == null && nextIds != null) {
+        ref.read(vpnProvider.notifier).pingStaleConfigs();
+        return;
+      }
       if (prevIds == null || nextIds == null) return;
       if (nextIds.difference(prevIds).isNotEmpty) {
         ref.read(vpnProvider.notifier).pingStaleConfigs();
       }
     });
+
+    // Sync VPN connected state to C++ for WM_CLOSE hide behavior
+    final vpnState = ref.watch(vpnProvider);
+    AppLogger.log('APP', 'build: vpnState=${vpnState.connectionState} isConnected=${vpnState.isConnected} isConnecting=${vpnState.isConnecting}');
+    setHideOnClose(vpnState.isConnected || vpnState.isConnecting);
 
     final updateState = ref.watch(updateProvider);
     final hasUpdate = updateState is UpdateAvailable ||
@@ -190,13 +202,40 @@ class _AppShellState extends ConsumerState<_AppShell>
     ));
 
     final currentIndex = ref.watch(tabIndexProvider);
-    return Scaffold(
-      body: IndexedStack(index: currentIndex, children: _pages),
-      bottomNavigationBar: _ConsoleTabBar(
+    final tabPos = ref.watch(settingsProvider).maybeWhen(
+      data: (s) => s.tabBarPosition,
+      orElse: () => TabBarPosition.bottom,
+    );
+
+    final tabBar = _ConsoleTabBar(
+      currentIndex: currentIndex,
+      hasUpdateBadge: hasUpdate,
+      onTap: (i) => ref.read(tabIndexProvider.notifier).set(i),
+    );
+
+    final content = IndexedStack(index: currentIndex, children: _pages);
+
+    if (tabPos == TabBarPosition.left || tabPos == TabBarPosition.right) {
+      final sideBar = _SideTabBar(
         currentIndex: currentIndex,
         hasUpdateBadge: hasUpdate,
         onTap: (i) => ref.read(tabIndexProvider.notifier).set(i),
-      ),
+        isRight: tabPos == TabBarPosition.right,
+      );
+      return Scaffold(
+        body: Row(
+          children: [
+            if (tabPos == TabBarPosition.left) sideBar,
+            Expanded(child: content),
+            if (tabPos == TabBarPosition.right) sideBar,
+          ],
+        ),
+      );
+    }
+
+    return Scaffold(
+      body: content,
+      bottomNavigationBar: tabBar,
     );
   }
 }
@@ -301,6 +340,102 @@ class _ConsoleTabBar extends ConsumerWidget {
   }
 }
 
+// ── Side tab bar (left/right) ─────────────────────────────────────
+
+class _SideTabBar extends ConsumerWidget {
+  final int currentIndex;
+  final bool hasUpdateBadge;
+  final bool isRight;
+  final void Function(int) onTap;
+
+  const _SideTabBar({
+    required this.currentIndex,
+    required this.hasUpdateBadge,
+    required this.isRight,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = Theme.of(context).extension<TeapodTokens>()!;
+
+    final items = [
+      _TabItem(icon: _TabIcon.shield, label: 'VPN'),
+      _TabItem(icon: _TabIcon.key,    label: 'Конфиги'),
+      _TabItem(icon: _TabIcon.list,   label: 'Логи'),
+      _TabItem(icon: _TabIcon.cog,    label: 'Настройки', badge: hasUpdateBadge),
+    ];
+
+    return Container(
+      width: 64,
+      decoration: BoxDecoration(
+        color: t.bg,
+        border: Border(
+          left: isRight ? BorderSide(color: t.line, width: 1) : BorderSide.none,
+          right: !isRight ? BorderSide(color: t.line, width: 1) : BorderSide.none,
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            children: items.asMap().entries.map((e) {
+              final idx = e.key;
+              final item = e.value;
+              final active = idx == currentIndex;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => onTap(idx),
+                  behavior: HitTestBehavior.opaque,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          _SvgTabIcon(
+                            icon: item.icon,
+                            color: active ? t.accent : t.textMuted,
+                          ),
+                          if (item.badge)
+                            Positioned(
+                              right: -3,
+                              top: -3,
+                              child: Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: t.danger,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item.label.length > 6
+                            ? item.label.substring(0, 6)
+                            : item.label.toUpperCase(),
+                        style: AppTheme.mono(
+                          size: 8,
+                          color: active ? t.accent : t.textMuted,
+                          letterSpacing: 0.5,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _TabItem {
   final _TabIcon icon;
   final String label;
@@ -308,7 +443,7 @@ class _TabItem {
   const _TabItem({required this.icon, required this.label, this.badge = false});
 }
 
-enum _TabIcon { shield, key, route, cog }
+enum _TabIcon { shield, key, route, cog, list }
 
 class _SvgTabIcon extends StatelessWidget {
   final _TabIcon icon;
@@ -382,6 +517,11 @@ class _TabIconPainter extends CustomPainter {
             paint,
           );
         }
+        break;
+      case _TabIcon.list:
+        canvas.drawLine(const Offset(4, 6), const Offset(20, 6), paint);
+        canvas.drawLine(const Offset(4, 12), const Offset(20, 12), paint);
+        canvas.drawLine(const Offset(4, 18), const Offset(20, 18), paint);
         break;
     }
   }

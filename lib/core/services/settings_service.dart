@@ -15,6 +15,8 @@ enum VpnMode {
 
 enum FontScale { normal, large }
 
+enum TabBarPosition { bottom, left, right }
+
 enum DnsQueryStrategy { ipv4Only, ipv6Only, auto }
 
 /// uTLS fingerprint override for TLS/REALITY outbounds.
@@ -88,6 +90,7 @@ class AppSettings {
   final bool ipv6Enabled;
   final bool autoStartOnBoot;
   final TlsFingerprint tlsFingerprint;
+  final TabBarPosition tabBarPosition;
 
   const AppSettings({
     this.socksPort = AppConstants.defaultSocksPort,
@@ -127,6 +130,7 @@ class AppSettings {
     this.ipv6Enabled = false,
     this.autoStartOnBoot = false,
     this.tlsFingerprint = TlsFingerprint.defaultFp,
+    this.tabBarPosition = TabBarPosition.bottom,
   });
 
   AppSettings copyWith({
@@ -167,6 +171,7 @@ class AppSettings {
     bool? ipv6Enabled,
     bool? autoStartOnBoot,
     TlsFingerprint? tlsFingerprint,
+    TabBarPosition? tabBarPosition,
   }) {
     return AppSettings(
       socksPort: socksPort ?? this.socksPort,
@@ -206,6 +211,7 @@ class AppSettings {
       ipv6Enabled: ipv6Enabled ?? this.ipv6Enabled,
       autoStartOnBoot: autoStartOnBoot ?? this.autoStartOnBoot,
       tlsFingerprint: tlsFingerprint ?? this.tlsFingerprint,
+      tabBarPosition: tabBarPosition ?? this.tabBarPosition,
     );
   }
 
@@ -247,6 +253,7 @@ class AppSettings {
     'ipv6Enabled': ipv6Enabled,
     'autoStartOnBoot': autoStartOnBoot,
     'tlsFingerprint': tlsFingerprint.name,
+    'tabBarPosition': tabBarPosition.name,
   };
 
   static AppSettings fromJson(Map<String, dynamic> json) {
@@ -296,6 +303,8 @@ class AppSettings {
       autoStartOnBoot: json['autoStartOnBoot'] as bool? ?? false,
       tlsFingerprint: TlsFingerprint.values.firstWhere(
         (e) => e.name == json['tlsFingerprint'], orElse: () => TlsFingerprint.defaultFp),
+      tabBarPosition: TabBarPosition.values.firstWhere(
+        (e) => e.name == json['tabBarPosition'], orElse: () => TabBarPosition.bottom),
     );
   }
 
@@ -351,6 +360,7 @@ class SettingsService {
   static const _ipv6EnabledKey = 'ipv6_enabled';
   static const _autoStartOnBootKey = 'auto_start_on_boot';
   static const _tlsFingerprintKey = 'tls_fingerprint';
+  static const _tabBarPositionKey = 'tab_bar_position';
 
   final _secure = StorageSecureService();
 
@@ -416,6 +426,9 @@ class SettingsService {
       tlsFingerprint: TlsFingerprint.values.firstWhere(
         (e) => e.name == prefs.getString(_tlsFingerprintKey),
         orElse: () => TlsFingerprint.defaultFp,
+      tabBarPosition: TabBarPosition.values.firstWhere(
+        (e) => e.name == prefs.getString(_tabBarPositionKey),
+        orElse: () => TabBarPosition.bottom,
       ),
     );
   }
@@ -488,6 +501,7 @@ class SettingsService {
     await prefs.setBool(_ipv6EnabledKey, settings.ipv6Enabled);
     await prefs.setBool(_autoStartOnBootKey, settings.autoStartOnBoot);
     await prefs.setString(_tlsFingerprintKey, settings.tlsFingerprint.name);
+    await prefs.setString(_tabBarPositionKey, settings.tabBarPosition.name);
     // SOCKS credentials go to encrypted storage
     await _secure.writeSocksCredentials(settings.socksUser, settings.socksPassword);
   }
