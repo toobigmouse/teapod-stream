@@ -60,6 +60,17 @@ class _SplitTunnelScreenState extends ConsumerState<SplitTunnelScreen> {
     final countStr = packages.length.toString().padLeft(2, '0');
 
     return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back_rounded, size: 20, color: t.textMuted),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text('split-tunnel',
+            style: AppTheme.mono(size: 11, color: t.textMuted, letterSpacing: 1)),
+        titleSpacing: 0,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: SafeArea(
         child: Column(
           children: [

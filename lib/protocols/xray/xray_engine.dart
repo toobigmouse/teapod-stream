@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/services.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/interfaces/vpn_engine.dart';
@@ -66,6 +65,7 @@ class XrayEngine implements VpnEngine {
   @override
   bool supportsConfig(VpnConfig config) => true;
 
+  @override
   Future<Map<String, String>> getBinaryVersions() async {
     try {
       final result = await _channel.invokeMethod<Map>('getBinaryVersions');
@@ -76,20 +76,7 @@ class XrayEngine implements VpnEngine {
     return {'xray': '—', 'tun2socks': '—'};
   }
 
-  /// Generate cryptographically random SOCKS credentials.
-  static ({String user, String password}) generateSocksCredentials() {
-    const chars =
-        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final rng = Random.secure();
-    String randomString(int len) =>
-        List.generate(len, (_) => chars[rng.nextInt(chars.length)]).join();
-
-    return (
-      user: 'u${randomString(8)}',
-      password: randomString(AppConstants.socksAuthPasswordLength),
-    );
-  }
-
+  @override
   /// Get current VPN state with SOCKS credentials (for sync on app start).
   Future<({VpnState state, int socksPort, String socksUser, String socksPassword, int connectedAtMs})>
       getVpnState() async {
@@ -111,6 +98,7 @@ class XrayEngine implements VpnEngine {
   }
 
   /// Returns the absolute path to the native log file (filesDir/vpn_log.txt).
+  @override
   Future<String?> getLogFilePath() async {
     try {
       return await _channel.invokeMethod<String>('getLogFilePath');
@@ -120,6 +108,7 @@ class XrayEngine implements VpnEngine {
   }
 
   /// Read persisted log file from native filesDir.
+  @override
   Future<List<VpnLogEntry>> getLogs() async {
     try {
       final lines = await _channel.invokeMethod<List<Object?>>('getLogs');
@@ -149,12 +138,13 @@ class XrayEngine implements VpnEngine {
   }
 
   /// Clear the persisted log file on native side.
+  @override
   Future<void> clearLogs() async {
     try {
       await _channel.invokeMethod<void>('clearLogs');
     } catch (_) {}
   }
-
+  @override
   /// Get current stats (for background polling).
   Future<({int upload, int download, int uploadSpeed, int downloadSpeed})>
       getStats() async {
@@ -174,6 +164,7 @@ class XrayEngine implements VpnEngine {
   }
 
   /// Get stats history for chart.
+  @override
   Future<List<Map<String, int>>> getStatsHistory() async {
     try {
       final result = await _channel.invokeMethod<List<Object?>>('getStatsHistory');

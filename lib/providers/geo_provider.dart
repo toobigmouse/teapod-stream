@@ -36,41 +36,45 @@ class GeoNotifier extends Notifier<GeoState> {
     return GeoMissing();
   }
 
-  Future<void> check() async {
+  Future<String?> _geoDir() async {
+    if (Platform.isWindows) {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final assetsDir = '$exeDir\\data\\flutter_assets\\assets\\binaries';
+      if (await Directory(assetsDir).exists()) return assetsDir;
+      return null;
+    }
     try {
-      final dir = await _channel.invokeMethod<String>('getFilesDir') ?? '';
-      if (dir.isEmpty) return;
-      final geoip = File('$dir/geoip.dat');
-      final geosite = File('$dir/geosite.dat');
-      if (!geoip.existsSync() || !geosite.existsSync()) {
-        // Try to extract bundled fallback from assets
-        await _channel.invokeMethod('prepareBinaries');
-      }
-      if (geoip.existsSync() && geosite.existsSync()) {
-        final prefs = await SharedPreferences.getInstance();
-        final ts = prefs.getInt(_kLastUpdated);
-        state = GeoReady(
-          lastUpdated: ts != null ? DateTime.fromMillisecondsSinceEpoch(ts) : null,
-        );
-      } else {
-        state = GeoMissing();
-      }
+      final dir = await _channel.invokeMethod<String>('getFilesDir');
+      return dir;
     } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> check() async {
+    final dir = await _geoDir();
+    if (dir == null) {
+      state = GeoMissing();
+      return;
+    }
+    final geoip = File('$dir/geoip.dat');
+    final geosite = File('$dir/geosite.dat');
+    if (geoip.existsSync() && geosite.existsSync()) {
+      final prefs = await SharedPreferences.getInstance();
+      final ts = prefs.getInt(_kLastUpdated);
+      state = GeoReady(
+        lastUpdated: ts != null ? DateTime.fromMillisecondsSinceEpoch(ts) : null,
+      );
+    } else {
       state = GeoMissing();
     }
   }
 
   Future<void> download() async {
     final settings = await ref.read(settingsProvider.future);
-    final String dir;
-    try {
-      dir = await _channel.invokeMethod<String>('getFilesDir') ?? '';
-    } catch (_) {
-      state = GeoError('Не удалось получить путь к файлам');
-      return;
-    }
-    if (dir.isEmpty) {
-      state = GeoError('Не удалось получить путь к файлам');
+    final dir = await _geoDir();
+    if (dir == null) {
+      state = GeoError('Не удалось получить путь к файлам (Windows: put geo files in assets/binaries/)');
       return;
     }
 

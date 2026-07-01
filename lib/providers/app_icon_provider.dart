@@ -13,5 +13,9 @@ final appIconProvider = FutureProvider.family<Uint8List?, String>((ref, packageN
     return bytes;
   } on PlatformException {
     return null;
+  } on MissingPluginException {
+    return null;
+  } catch (_) {
+    return null;
   }
 });

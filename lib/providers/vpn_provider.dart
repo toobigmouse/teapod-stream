@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
 import '../core/interfaces/vpn_engine.dart';
 import '../core/models/vpn_config.dart';
 import '../core/constants/app_constants.dart';
@@ -10,8 +11,9 @@ import '../core/models/vpn_stats.dart';
 import '../core/models/vpn_log_entry.dart';
 import '../core/services/log_service.dart';
 import '../core/services/settings_service.dart';
-import 'ip_info_provider.dart';
+import '../core/services/app_logger.dart';
 import '../protocols/xray/xray_engine.dart';
+import '../protocols/xray/windows_xray_engine.dart';
 import 'settings_provider.dart';
 import 'config_provider.dart';
 
@@ -57,7 +59,7 @@ class VpnState2 {
 }
 
 class VpnNotifier extends Notifier<VpnState2> {
-  late final XrayEngine _engine;
+  late VpnEngine _engine;
   static const _eventChannel =
       EventChannel('${AppConstants.methodChannel}/events');
 
@@ -69,10 +71,19 @@ class VpnNotifier extends Notifier<VpnState2> {
   bool _isPinging = false;
   DateTime? _connectedAt;
 
+  static void _debugLog(String msg) {
+    try {
+      final f = File('${AppLogger.logDir.path}\\debug.log');
+      f.writeAsStringSync('${DateTime.now()}|$msg\n', mode: FileMode.append);
+    } catch (_) {}
+  }
+
 
   @override
   VpnState2 build() {
-    _engine = XrayEngine();
+    _debugLog('VpnNotifier.build() called');
+    // Default engine; overridden in connect() based on proxyOnly
+    _engine = Platform.isWindows ? WindowsXrayEngine() : XrayEngine();
 
     _eventSub = _eventChannel.receiveBroadcastStream().listen(
       (dynamic event) {
@@ -93,6 +104,14 @@ class VpnNotifier extends Notifier<VpnState2> {
       _disconnectTimeout?.cancel();
       _statsPoller?.cancel();
       _subRefreshTimer?.cancel();
+      // Kill xray on provider dispose (app close).
+      // Skip in tests (FLUTTER_TEST env var is set) because Process.run
+      // in WindowsXrayEngine.disconnect creates pending fake timers.
+      if (Platform.isWindows && _engine is WindowsXrayEngine) {
+        if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+          (_engine as WindowsXrayEngine).disconnect().ignore();
+        }
+      }
     });
 
     // Auto-refresh subscriptions: timer fires hourly, staleness check uses configured interval
@@ -128,9 +147,6 @@ class VpnNotifier extends Notifier<VpnState2> {
         if (logEntries.isNotEmpty) {
           ref.read(logServiceProvider.notifier).loadFromEntries(logEntries);
         }
-        // ipInfoProvider is AsyncNotifier, needs refresh to rebuild
-        // ignore: unused_result
-        ref.refresh(ipInfoProvider);
         // Also fetch initial stats
         _startStatsPolling();
       }
@@ -160,6 +176,14 @@ class VpnNotifier extends Notifier<VpnState2> {
         final history = await _engine.getStatsHistory();
         if (history.isNotEmpty) {
           _handleStatsHistory({'history': history});
+        }
+
+        // Fetch logs periodically (every 3s)
+        if (DateTime.now().millisecondsSinceEpoch % 3000 < 1000) {
+          final logEntries = await _engine.getLogs();
+          if (logEntries.isNotEmpty) {
+            ref.read(logServiceProvider.notifier).loadFromEntries(logEntries);
+          }
         }
       } catch (_) {}
     });
@@ -314,6 +338,8 @@ class VpnNotifier extends Notifier<VpnState2> {
   }
 
   Future<void> connect() async {
+    _debugLog('VpnNotifier.connect() called, isBusy=${state.isBusy}, isConnected=${state.isConnected}');
+    AppLogger.log('VPN', 'connect() called, isBusy=${state.isBusy}, isConnected=${state.isConnected}');
     if (state.isBusy || state.isConnected) return;
 
     // Update state synchronously — button turns yellow in the same frame as tap
@@ -331,11 +357,16 @@ class VpnNotifier extends Notifier<VpnState2> {
     });
 
     // Notification permission for foreground service (Android 13+) — best-effort
-    await Permission.notification.request();
+    if (!Platform.isWindows) {
+      await Permission.notification.request();
+    }
 
+    try {
     final configState =
         ref.read(configProvider).maybeWhen(data: (d) => d, orElse: () => null);
     final config = _resolveEffectiveConfig(configState);
+    _debugLog('config resolved: ${config != null ? 'ok' : 'null'}');
+    AppLogger.log('VPN', 'config resolved: ${config != null ? 'ok' : 'null'}, address=${config?.address}, port=${config?.port}');
     if (config == null) {
       ref.read(logServiceProvider.notifier).addError('No configuration selected');
       state = state.copyWith(connectionState: VpnState.error, error: 'No configuration selected');
@@ -344,27 +375,52 @@ class VpnNotifier extends Notifier<VpnState2> {
       return;
     }
 
+    _debugLog('validating config...');
     final validationError = config.validate();
     if (validationError != null) {
+      _debugLog('validation failed: $validationError');
       ref.read(logServiceProvider.notifier).addError('Invalid config: $validationError');
       state = state.copyWith(connectionState: VpnState.error, error: validationError);
       _connectTimeout?.cancel();
       _connectTimeout = null;
       return;
     }
+    _debugLog('validation ok');
 
+    _debugLog('reading settings...');
     final settings =
         ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null) ??
             const AppSettings();
+    _debugLog('settings ok, proxyOnly=${settings.proxyOnly}, randomPort=${settings.randomPort}, socksPort=${settings.socksPort}');
 
+    // Select engine: WindowsXrayEngine for both proxy and TUN modes
+    if (Platform.isWindows) {
+      // Reuse existing engine if still running, otherwise create new
+      if (_engine is! WindowsXrayEngine || !(_engine as WindowsXrayEngine).isRunning) {
+        final newEngine = WindowsXrayEngine();
+        newEngine.onCrashed = () {
+          // xray crashed — update state to disconnected
+          if (state.connectionState == VpnState.connected) {
+            ref.read(logServiceProvider.notifier).addError('xray-core process crashed');
+            state = VpnState2(connectionState: VpnState.error, error: 'xray-core crashed');
+          }
+        };
+        _engine = newEngine;
+      }
+    }
+
+    _debugLog('generating credentials...');
     final socksCredentials = settings.randomCredentials
-        ? XrayEngine.generateSocksCredentials()
+        ? generateSocksCredentials()
         : (user: settings.socksUser, password: settings.socksPassword);
 
     final actualSocksPort = settings.randomPort
         ? (10000 + Random().nextInt(50000))
         : settings.socksPort;
+    _debugLog('port=$actualSocksPort, user=${socksCredentials.user}');
+    AppLogger.log('VPN', 'port=$actualSocksPort, proxyOnly=${settings.proxyOnly}, user=${socksCredentials.user}');
 
+    _debugLog('building options...');
     final options = VpnEngineOptions(
       socksPort: actualSocksPort,
       httpPort: 0,
@@ -400,16 +456,48 @@ class VpnNotifier extends Notifier<VpnState2> {
       activeSocksUser: socksCredentials.user,
       activeSocksPassword: socksCredentials.password,
     );
+    _debugLog('options built, calling engine.connect()...');
 
     try {
+      _debugLog('engine.connect() starting...');
+      AppLogger.log('VPN', 'calling engine.connect()...');
       await _engine.connect(config, options);
+      _debugLog('engine.connect() returned ok');
+      AppLogger.log('VPN', 'engine.connect() returned OK');
+      if (Platform.isWindows) {
+        // No EventChannel on Windows — set state directly
+        _onNativeState(VpnState.connected);
+        AppLogger.log('VPN', 'state set to connected');
+      }
       // Polling is now started in _onNativeState when connected
+      // Ping the active config after successful connection
+      pingAllConfigs();
+      AppLogger.log('VPN', 'ping triggered after connect');
     } on PlatformException catch (e) {
+      _debugLog('PlatformException: ${e.message}');
+      AppLogger.log('VPN', 'PlatformException: ${e.message}');
       ref
           .read(logServiceProvider.notifier)
           .addError('Connection failed: ${e.message}');
       state = state.copyWith(
           connectionState: VpnState.error, error: e.message);
+      _connectTimeout?.cancel();
+      _connectTimeout = null;
+    } catch (e) {
+      _debugLog('Exception: $e');
+      AppLogger.log('VPN', 'Exception: $e');
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      ref.read(logServiceProvider.notifier).addError('Connection failed: $msg');
+      state = state.copyWith(connectionState: VpnState.error, error: msg);
+      _connectTimeout?.cancel();
+      _connectTimeout = null;
+    }
+    } catch (outerE) {
+      _debugLog('OUTER Exception: $outerE');
+      AppLogger.log('VPN', 'OUTER Exception: $outerE');
+      final msg = outerE.toString().replaceFirst('Exception: ', '');
+      ref.read(logServiceProvider.notifier).addError('Connection failed: $msg');
+      state = state.copyWith(connectionState: VpnState.error, error: msg);
       _connectTimeout?.cancel();
       _connectTimeout = null;
     }
@@ -433,6 +521,10 @@ class VpnNotifier extends Notifier<VpnState2> {
 
     try {
       await _engine.disconnect();
+      if (Platform.isWindows) {
+        // No EventChannel on Windows — set state directly
+        _onNativeState(VpnState.disconnected);
+      }
     } on PlatformException catch (e) {
       ref
           .read(logServiceProvider.notifier)
@@ -445,9 +537,15 @@ class VpnNotifier extends Notifier<VpnState2> {
   }
 
   /// Syncs Flutter state from native when the app resumes from background.
-  /// EventChannel replay on `onListen` handles most cases; this is a fallback.
   Future<void> syncNativeState() async {
-    // We now handle timeouts inside _onNativeState, so it's safe to sync everything.
+    if (Platform.isWindows) {
+      // No MethodChannel on Windows — check actual engine state
+      try {
+        final vpnState = await _engine.getVpnState();
+        _onNativeState(vpnState.state, isReconnect: false);
+      } catch (_) {}
+      return;
+    }
 
     try {
       const channel = MethodChannel(AppConstants.methodChannel);
@@ -458,6 +556,7 @@ class VpnNotifier extends Notifier<VpnState2> {
   }
 
   Future<void> toggle() async {
+    _debugLog('toggle() called, isBusy=${state.isBusy}, isConnected=${state.isConnected}');
     if (state.isBusy) return;
     if (state.isConnected) {
       await disconnect();

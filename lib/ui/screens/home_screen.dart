@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/interfaces/vpn_engine.dart';
 import '../../core/models/vpn_stats.dart';
 import '../../providers/vpn_provider.dart';
 import '../../providers/config_provider.dart';
@@ -52,7 +53,10 @@ class HomeScreen extends ConsumerWidget {
                 protoLabel: protoLabel,
                 pingMs: pingMs,
                 canToggle: canToggle,
-                onToggle: () => ref.read(vpnProvider.notifier).toggle(),
+                onToggle: () {
+                  debugPrint('=== BUTTON TAP ===');
+                  ref.read(vpnProvider.notifier).toggle();
+                },
               ),
               _MetricsGrid(
                 t: t,
@@ -181,24 +185,31 @@ class _StateInfo extends ConsumerWidget {
     final isConn          = vpnState.isConnected;
     final isConnecting    = vpnState.isConnecting;
     final isDisconnecting = vpnState.isDisconnecting;
+    final isError         = vpnState.connectionState == VpnState.error;
     final ipAsync         = ref.watch(ipInfoProvider);
 
     final stateWord = isConn
         ? 'ONLINE'
-        : (isConnecting ? 'HANDSHAKE' : (isDisconnecting ? 'SHUTDOWN' : 'OFFLINE'));
-    final stateColor = isConn ? t.accent : t.textDim;
+        : (isConnecting ? 'HANDSHAKE' : (isDisconnecting ? 'SHUTDOWN' : (isError ? 'ERROR' : 'OFFLINE')));
+    final stateColor = isConn ? t.accent : (isError ? t.danger : t.textDim);
 
-    String subtitle;
-    if (isConn) {
-      final ipStr = ipAsync.maybeWhen(data: (d) => d?.ip, orElse: () => null) ?? '—';
-      final cc    = ipAsync.maybeWhen(data: (d) => d?.countryCode.toLowerCase(), orElse: () => null) ?? '—';
-      subtitle = pingMs != null ? '${pingMs}ms · $cc · $ipStr' : '$cc · $ipStr';
-    } else if (isConnecting) {
-      subtitle = 'negotiating session…';
-    } else if (isDisconnecting) {
-      subtitle = 'closing session…';
-    } else {
-      subtitle = 'tap to connect';
+    Widget buildSubtitle() {
+      if (isConn) {
+        final ipStr = ipAsync.maybeWhen(data: (d) => d?.ip, orElse: () => null) ?? '—';
+        final cc    = ipAsync.maybeWhen(data: (d) => d?.countryCode.toLowerCase(), orElse: () => null) ?? '—';
+        final baseStyle = AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5);
+        final pingStr = pingMs != null ? '${pingMs}ms' : '—ms';
+        final text = '$pingStr — $cc · $ipStr';
+        return Text(text, style: baseStyle);
+      } else if (isConnecting) {
+        return Text('negotiating session…', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isDisconnecting) {
+        return Text('closing session…', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else if (isError) {
+        return Text(vpnState.error ?? 'Unknown error', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      } else {
+        return Text('tap to connect', style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5));
+      }
     }
 
     return Column(
@@ -211,8 +222,7 @@ class _StateInfo extends ConsumerWidget {
             color: stateColor, letterSpacing: -1, height: 1),
         ),
         const SizedBox(height: 6),
-        Text(subtitle,
-            style: AppTheme.mono(size: 11, color: t.textDim, letterSpacing: 0.5)),
+        buildSubtitle(),
       ],
     );
   }
@@ -269,7 +279,7 @@ class _PowerCoreState extends State<_PowerCore> with SingleTickerProviderStateMi
     const innerSize = coreSize - 44.0;
 
     return GestureDetector(
-      onTap: widget.enabled ? widget.onTap : null,
+      onTap: widget.onTap,
       child: SizedBox(
         width: outerSize,
         height: outerSize,

@@ -15,6 +15,8 @@ enum VpnMode {
 
 enum FontScale { normal, large }
 
+enum TabBarPosition { bottom, left, right }
+
 enum DnsQueryStrategy { ipv4Only, ipv6Only, auto }
 
 class GeoPresets {
@@ -75,6 +77,7 @@ class AppSettings {
   final DnsQueryStrategy dnsQueryStrategy;
   final bool blockQuic;
   final bool autoStartOnBoot;
+  final TabBarPosition tabBarPosition;
 
   const AppSettings({
     this.socksPort = AppConstants.defaultSocksPort,
@@ -110,6 +113,7 @@ class AppSettings {
     this.dnsQueryStrategy = DnsQueryStrategy.ipv4Only,
     this.blockQuic = false,
     this.autoStartOnBoot = false,
+    this.tabBarPosition = TabBarPosition.bottom,
   });
 
   AppSettings copyWith({
@@ -146,6 +150,7 @@ class AppSettings {
     DnsQueryStrategy? dnsQueryStrategy,
     bool? blockQuic,
     bool? autoStartOnBoot,
+    TabBarPosition? tabBarPosition,
   }) {
     return AppSettings(
       socksPort: socksPort ?? this.socksPort,
@@ -181,6 +186,7 @@ class AppSettings {
       dnsQueryStrategy: dnsQueryStrategy ?? this.dnsQueryStrategy,
       blockQuic: blockQuic ?? this.blockQuic,
       autoStartOnBoot: autoStartOnBoot ?? this.autoStartOnBoot,
+      tabBarPosition: tabBarPosition ?? this.tabBarPosition,
     );
   }
 
@@ -218,6 +224,7 @@ class AppSettings {
     'dnsQueryStrategy': dnsQueryStrategy.name,
     'blockQuic': blockQuic,
     'autoStartOnBoot': autoStartOnBoot,
+    'tabBarPosition': tabBarPosition.name,
   };
 
   static AppSettings fromJson(Map<String, dynamic> json) {
@@ -262,6 +269,8 @@ class AppSettings {
         (e) => e.name == json['dnsQueryStrategy'], orElse: () => DnsQueryStrategy.ipv4Only),
       blockQuic: json['blockQuic'] as bool? ?? false,
       autoStartOnBoot: json['autoStartOnBoot'] as bool? ?? false,
+      tabBarPosition: TabBarPosition.values.firstWhere(
+        (e) => e.name == json['tabBarPosition'], orElse: () => TabBarPosition.bottom),
     );
   }
 
@@ -313,6 +322,7 @@ class SettingsService {
   static const _dnsQueryStrategyKey = 'dns_query_strategy';
   static const _blockQuicKey = 'block_quic';
   static const _autoStartOnBootKey = 'auto_start_on_boot';
+  static const _tabBarPositionKey = 'tab_bar_position';
 
   final _secure = StorageSecureService();
 
@@ -372,6 +382,10 @@ class SettingsService {
       ),
       blockQuic: prefs.getBool(_blockQuicKey) ?? false,
       autoStartOnBoot: prefs.getBool(_autoStartOnBootKey) ?? false,
+      tabBarPosition: TabBarPosition.values.firstWhere(
+        (e) => e.name == prefs.getString(_tabBarPositionKey),
+        orElse: () => TabBarPosition.bottom,
+      ),
     );
   }
 
@@ -439,6 +453,7 @@ class SettingsService {
     await prefs.setString(_dnsQueryStrategyKey, settings.dnsQueryStrategy.name);
     await prefs.setBool(_blockQuicKey, settings.blockQuic);
     await prefs.setBool(_autoStartOnBootKey, settings.autoStartOnBoot);
+    await prefs.setString(_tabBarPositionKey, settings.tabBarPosition.name);
     // SOCKS credentials go to encrypted storage
     await _secure.writeSocksCredentials(settings.socksUser, settings.socksPassword);
   }

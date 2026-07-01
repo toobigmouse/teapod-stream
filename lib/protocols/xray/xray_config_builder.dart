@@ -463,10 +463,111 @@ class XrayConfigBuilder {
     return const JsonEncoder().convert(build(config, options));
   }
 
+  static String buildTunJson(VpnConfig config, VpnEngineOptions options) {
+    return const JsonEncoder().convert(buildTun(config, options));
+  }
+
   static bool _isIpAddress(String host) {
     if (RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(host)) return true;
     if (host.contains(':')) return true; // IPv6
     return false;
+  }
+
+  /// Extract proxy server address from raw config's outbounds
+  static String? _extractServerAddress(Map<String, dynamic> cfg) {
+    try {
+      final outbounds = cfg['outbounds'] as List? ?? [];
+      for (final ob in outbounds) {
+        if (ob is! Map) continue;
+        if (ob['tag'] != 'proxy') continue;
+        final settings = ob['settings'] as Map? ?? {};
+        // VLESS/VMess: vnext[0].address
+        final vnext = settings['vnext'] as List?;
+        if (vnext != null && vnext.isNotEmpty) {
+          return (vnext[0] as Map?)?['address'] as String?;
+        }
+        // Trojan/SS: servers[0].address
+        final servers = settings['servers'] as List?;
+        if (servers != null && servers.isNotEmpty) {
+          return (servers[0] as Map?)?['address'] as String?;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Build xray config with TUN inbound for WinTUN full-tunnel mode.
+  /// Adds a TUN inbound alongside the existing SOCKS inbound.
+  static Map<String, dynamic> buildTun(VpnConfig config, VpnEngineOptions options, {
+    String tunAddress = '10.0.0.1/24',
+    String tunDns = '8.8.8.8',
+  }) {
+    final base = build(config, options);
+
+    // Add TUN inbound
+    final inbounds = List<Map<String,dynamic>>.from(base['inbounds'] as List);
+    inbounds.insert(0, {
+      'tag': 'tun-in',
+      'protocol': 'tun',
+      'settings': {
+        'address': [tunAddress],
+        'autoRoute': false,
+        'strictRoute': true,
+        'stack': 'gvisor',
+        'sniff': true,
+        'domainOverride': ['http', 'https'],
+        'mtu': 9000,
+      },
+      'sniffing': {
+        'enabled': true,
+        'destOverride': ['http', 'tls'],
+      },
+    });
+
+    base['inbounds'] = inbounds;
+
+    // Update routing: tun-in traffic goes to proxy
+    final rt = base['routing'] as Map<String, dynamic>;
+    final rules = List<Map<String, dynamic>>.from(rt['rules'] as List);
+    final useSocksRules = options.routing.isActive;
+
+    // CRITICAL: Proxy server itself must bypass TUN to avoid routing loop
+    rules.insert(0, {
+      'type': 'field',
+      if (_isIpAddress(config.address))
+        'ip': [config.address]
+      else
+        'domain': [config.address],
+      'outboundTag': 'direct',
+    });
+
+    // Add DNS routing rule for TUN
+    rules.insert(1, {
+      'type': 'field',
+      'inboundTag': ['tun-in'],
+      'port': '53',
+      'network': 'udp,tcp',
+      'outboundTag': 'dns-out',
+    });
+
+    // Geo-rules (bypass/only) must come BEFORE the TUN catch-all
+    // so matched traffic is routed before the catch-all fires.
+    if (useSocksRules) {
+      final geoRules = _buildGeoRules(options.routing);
+      // Insert after DNS rule (index 1), before existing socks rules
+      rules.insertAll(2, geoRules);
+    }
+
+    // TUN catch-all at the END — respects routing direction
+    rules.add({
+      'type': 'field',
+      'inboundTag': ['tun-in'],
+      'outboundTag': options.routing.direction == RoutingDirection.onlySelected ? 'direct' : 'proxy',
+    });
+
+    rt['rules'] = rules;
+
+    return base;
   }
 
   /// Merge app settings into a pre-built raw xray config from a managed subscription.
@@ -477,7 +578,7 @@ class XrayConfigBuilder {
       final cfg = jsonDecode(rawConfig) as Map<String, dynamic>;
 
       // Replace inbounds with app's (port, credentials, sniffing)
-      cfg['inbounds'] = [
+      final inbounds = <Map<String, dynamic>>[
         {
           'tag': 'socks-in',
           'protocol': 'socks',
@@ -501,6 +602,29 @@ class XrayConfigBuilder {
         },
       ];
 
+      // Add TUN inbound when not proxy-only
+      if (!options.proxyOnly) {
+        inbounds.insert(0, {
+          'tag': 'tun-in',
+          'protocol': 'tun',
+          'settings': {
+            'address': ['10.0.0.1/24'],
+            'autoRoute': false,
+            'strictRoute': true,
+            'stack': 'gvisor',
+            'sniff': true,
+            'domainOverride': ['http', 'https'],
+            'mtu': 9000,
+          },
+          'sniffing': {
+            'enabled': true,
+            'destOverride': ['http', 'tls'],
+          },
+        });
+      }
+
+      cfg['inbounds'] = inbounds;
+
       // Replace dns with app's (adblock, DNS server, DNS mode)
       cfg['dns'] = _buildDnsBlock(options);
 
@@ -518,10 +642,41 @@ class XrayConfigBuilder {
 
       // Build app routing rules to prepend (app has priority over server rules)
       final appRules = <Map<String, dynamic>>[];
+      final routing = options.routing;
+
+      // TUN inbound routing
+      if (!options.proxyOnly) {
+        // CRITICAL: Proxy server itself must bypass TUN to avoid routing loop
+        final serverAddr = _extractServerAddress(cfg);
+        if (serverAddr != null) {
+          appRules.add({
+            'type': 'field',
+            if (_isIpAddress(serverAddr))
+              'ip': [serverAddr]
+            else
+              'domain': [serverAddr],
+            'outboundTag': 'direct',
+          });
+        }
+        // DNS queries from TUN go to dns-out
+        appRules.add({
+          'type': 'field',
+          'inboundTag': ['tun-in'],
+          'port': '53',
+          'network': 'udp,tcp',
+          'outboundTag': 'dns-out',
+        });
+      }
 
       // blockQuic is enforced at the TUN level (tun2socks ICMP Port Unreachable),
       // not in xray routing — see the comment in build() for the rationale.
 
+      // Bypass/only geo-rules — must come BEFORE the TUN catch-all
+      if (routing.isActive) {
+        appRules.addAll(_buildGeoRules(routing));
+      }
+
+      // DNS mode rules
       if (options.dnsMode == DnsMode.proxy) {
         appRules.add({
           'type': 'field',
@@ -541,10 +696,13 @@ class XrayConfigBuilder {
         });
       }
 
-      // Bypass/only rules from app settings — only safe if direction is not global
-      final routing = options.routing;
-      if (routing.isActive) {
-        appRules.addAll(_buildGeoRules(routing));
+      // TUN catch-all at the END — respects routing direction
+      if (!options.proxyOnly) {
+        appRules.add({
+          'type': 'field',
+          'inboundTag': ['tun-in'],
+          'outboundTag': routing.direction == RoutingDirection.onlySelected ? 'direct' : 'proxy',
+        });
       }
 
       // Prepend app rules to the server's existing rules

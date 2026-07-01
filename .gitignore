@@ -6,6 +6,9 @@ build/
 *.aab
 *.jar
 *.class
+*.msix
+*.msixupload
+*.pfx
 
 # ─────────────────────────────────────────
 #  Flutter / Dart
@@ -36,6 +39,7 @@ android/captures/
 android/app/src/main/jniLibs/
 android/app/libs/*.aar
 assets/binaries/
+windows/win_tun/*.dll
 
 # ─────────────────────────────────────────
 #  IDE
@@ -52,6 +56,7 @@ assets/binaries/
 # ─────────────────────────────────────────
 .DS_Store
 Thumbs.db
+nul
 
 # ─────────────────────────────────────────
 #  AI assistants
