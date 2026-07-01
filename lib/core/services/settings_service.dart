@@ -58,7 +58,7 @@ class AppSettings {
   final Set<String> excludedPackages;
   final Set<String> includedPackages;
   final VpnMode vpnMode;
-  final bool splitTunnelingEnabled;
+  // splitTunnelingEnabled — removed, disabled by default
   final bool randomPort;
   final bool autoConnect;
   final DnsMode dnsMode;
@@ -98,7 +98,7 @@ class AppSettings {
     this.excludedPackages = const {},
     this.includedPackages = const {},
     this.vpnMode = VpnMode.onlySelected,
-    this.splitTunnelingEnabled = false,
+    // splitTunnelingEnabled removed
     this.randomPort = true,
     this.autoConnect = false,
     this.dnsMode = DnsMode.proxy,
@@ -139,7 +139,7 @@ class AppSettings {
     Set<String>? excludedPackages,
     Set<String>? includedPackages,
     VpnMode? vpnMode,
-    bool? splitTunnelingEnabled,
+    // bool? splitTunnelingEnabled — removed
     bool? randomPort,
     bool? autoConnect,
     DnsMode? dnsMode,
@@ -179,7 +179,7 @@ class AppSettings {
       excludedPackages: excludedPackages ?? this.excludedPackages,
       includedPackages: includedPackages ?? this.includedPackages,
       vpnMode: vpnMode ?? this.vpnMode,
-      splitTunnelingEnabled: splitTunnelingEnabled ?? this.splitTunnelingEnabled,
+      // splitTunnelingEnabled removed (always false)
       randomPort: randomPort ?? this.randomPort,
       autoConnect: autoConnect ?? this.autoConnect,
       dnsMode: dnsMode ?? this.dnsMode,
@@ -221,7 +221,7 @@ class AppSettings {
     'excludedPackages': excludedPackages.toList(),
     'includedPackages': includedPackages.toList(),
     'vpnMode': vpnMode.name,
-    'splitTunnelingEnabled': splitTunnelingEnabled,
+    // 'splitTunnelingEnabled' removed
     'randomPort': randomPort,
     'autoConnect': autoConnect,
     'dnsMode': dnsMode.name,
@@ -266,7 +266,7 @@ class AppSettings {
       includedPackages: (json['includedPackages'] as List<dynamic>?)?.cast<String>().toSet() ?? {},
       vpnMode: VpnMode.values.firstWhere(
         (e) => e.name == json['vpnMode'], orElse: () => VpnMode.onlySelected),
-      splitTunnelingEnabled: json['splitTunnelingEnabled'] as bool? ?? false,
+      // splitTunnelingEnabled removed (always false)
       randomPort: json['randomPort'] as bool? ?? true,
       autoConnect: json['autoConnect'] as bool? ?? false,
       dnsMode: DnsMode.values.firstWhere(
@@ -319,7 +319,7 @@ class SettingsService {
   static const _socksPortKey = 'socks_port';
   static const _logLevelKey = 'log_level';
   static const _excludedPackagesKey = 'excluded_packages';
-  static const _splitTunnelingKey = 'split_tunneling_enabled';
+  // static const _splitTunnelingKey — removed
   static const _randomPortKey = 'random_port';
   static const _autoConnectKey = 'auto_connect';
   static const _dnsModeKey = 'dns_mode';
@@ -382,7 +382,7 @@ class SettingsService {
         (e) => e.name == prefs.getString(_vpnModeKey),
         orElse: () => VpnMode.onlySelected,
       ),
-      splitTunnelingEnabled: prefs.getBool(_splitTunnelingKey) ?? false,
+      // splitTunnelingEnabled removed (always false)
       randomPort: prefs.getBool(_randomPortKey) ?? true,
       autoConnect: prefs.getBool(_autoConnectKey) ?? false,
       dnsMode: DnsMode.values.firstWhere(
@@ -462,7 +462,7 @@ class SettingsService {
     await prefs.setStringList(
         _includedPackagesKey, settings.includedPackages.toList());
     await prefs.setString(_vpnModeKey, settings.vpnMode.name);
-    await prefs.setBool(_splitTunnelingKey, settings.splitTunnelingEnabled);
+    // splitTunnelingEnabled save removed
     await prefs.setBool(_randomPortKey, settings.randomPort);
     await prefs.setBool(_autoConnectKey, settings.autoConnect);
     await prefs.setString(_dnsModeKey, settings.dnsMode.name);

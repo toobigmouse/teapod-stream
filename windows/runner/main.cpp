@@ -29,9 +29,28 @@ static void MainDebugLog(const char* msg) {
   } catch (...) {}
 }
 
+static const wchar_t* kMutexName = L"TeapodStream_SingleInstance_Mutex";
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   MainDebugLog("wWinMain START");
+
+  // Single-instance check via named mutex
+  HANDLE hMutex = CreateMutexW(nullptr, FALSE, kMutexName);
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    MainDebugLog("Another instance detected — activating existing window");
+    CloseHandle(hMutex);
+    HWND hwnd = FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"teapodstream");
+    if (hwnd) {
+      if (IsWindowVisible(hwnd)) {
+        SetForegroundWindow(hwnd);
+      } else {
+        ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
+      }
+    }
+    return EXIT_SUCCESS;
+  }
 
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
