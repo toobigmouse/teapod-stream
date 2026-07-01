@@ -1,6 +1,6 @@
 # TeapodStream
 
-VPN-клиент для Android с поддержкой протокола Xray и интерфейсом TUN.
+VPN-клиент для **Android** и **Windows** с поддержкой протокола Xray и интерфейсом TUN.
 
 > [!WARNING]
 > Во избежание недопониманий, коротко о сути проекта и планах
@@ -33,6 +33,8 @@ VPN-клиент для Android с поддержкой протокола Xray 
 
 ## Архитектура
 
+### Android
+
 Режим TUN (по умолчанию):
 ```
 [Приложения] → [TUN-интерфейс] → [teapod-tun2socks] → [SOCKS5 127.0.0.1:port] → [xray-core] → [Сервер]
@@ -46,6 +48,23 @@ VPN-клиент для Android с поддержкой протокола Xray 
 - **xray-core** — ядро маршрутизации (XTLS/Xray-core)
 - **teapod-tun2socks** — мост между TUN-интерфейсом и SOCKS5-прокси xray (AAR)
 - **Android VpnService** — управление TUN-интерфейсом на уровне ОС
+
+### Windows
+
+Режим TUN (full-tunnel):
+```
+[Приложения] → [WinTUN-адаптер] → [xray-core (TUN inbound)] → [xray-core (outbound)] → [Сервер]
+```
+
+Режим SOCKS5-прокси:
+```
+[Приложение] → [SOCKS5 127.0.0.1:port] → [xray-core] → [Сервер]
+```
+
+- **xray-core** — запускается как отдельный процесс (`xray.exe`)
+- **WinTUN** — TUN-адаптер на базе wintun.dll (WireGuard), подключается через FFI
+- **Маршруты** — настройка через PowerShell (`New-NetRoute`), включая обходной маршрут для сервера прокси (предотвращение цикла)
+- **System Tray** — сворачивание в трей при закрытии окна (если VPN активен), иконка с контекстным меню
 
 ## Настройки
 
@@ -84,6 +103,8 @@ VPN-клиент для Android с поддержкой протокола Xray 
 
 ## Сборка
 
+### Android
+
 ```bash
 # Скачать бинарные зависимости (teapod-core.aar + geodata)
 ./build.sh binaries
@@ -100,11 +121,35 @@ VPN-клиент для Android с поддержкой протокола Xray 
 ./build.sh clean
 ```
 
+### Windows
+
+```powershell
+# Flutter build + создание MSIX-пакета
+.\windows\build.ps1                              # x64, со сборкой и подписью
+.\windows\build.ps1 -Architecture arm64          # ARM64
+.\windows\build.ps1 -SkipBuild                   # только упаковка (если сборка уже есть)
+.\windows\build.ps1 -SkipSign                    # без подписи
+.\windows\build.ps1 -CertificatePath cert.pfx -CertificatePassword "pass"  # с внешним сертификатом
+```
+
+Или напрямую:
+
+```bash
+flutter build windows --release
+```
+
 ### Требования
 
+**Android:**
 - Flutter SDK (Dart SDK 3.11+)
 - Android SDK
 - Java 21+
+
+**Windows:**
+- Flutter SDK (Dart SDK 3.10+)
+- Visual Studio 2022 (с компонентами «Разработка классических приложений на C++»)
+- Windows 10 22H2+ / Windows 11
+- Для MSIX: Windows SDK (MakeAppx.exe, SignTool.exe)
 
 ### Зависимости
 
@@ -112,20 +157,36 @@ VPN-клиент для Android с поддержкой протокола Xray 
 - [teapod-core](https://github.com/Wendor/teapod-core) (xray-core + teapod-tun2socks)
 - [geoip.dat / geosite.dat](https://github.com/Loyalsoldier/v2ray-rules-dat)
 
+На Windows бинарные файлы (`xray.exe`, `geoip.dat`, `geosite.dat`) помещаются в `assets/binaries/` или располагаются рядом с исполняемым файлом. В MSIX-сборке `xray.exe` копируется в `%TEMP%` при запуске (песочница MSIX не разрешает запуск из `Program Files`).
+
+## Особенности Windows
+
+- **System Tray** — при закрытии окна с активным VPN приложение сворачивается в трей; выход — через контекстное меню иконки
+- **Фиксированный размер окна** — телефонно-подобный пропорциональный размер, отцентрированный на экране
+- **MSIX-пакет** — установка через AppInstaller с автообновлением, подпись кодом (самоподписанный сертификат для разработки)
+- **WinTUN** — поддержка полного туннеля через wintun.dll (WireGuard) с управлением маршрутами через Windows IP Helper API
+- **Routing loop protection** — автоматический обходной маршрут `/32` для сервера прокси поверх TUN-маршрутов
+- **MSIX Sandbox** — автоматическое копирование `xray.exe` из пакета в `%TEMP%` для обхода ограничений на запуск
+
 ## Тестирование
 
-Unit-тесты минимальны. Основная верификация — запуск на устройстве.
+Unit-тесты минимальны. Основная верификация — запуск на устройстве / ПК.
 
 ```bash
 flutter test   # запуск unit-тестов
 flutter analyze
 ```
 
-## Поддерживаемые архитектуры
+## Поддерживаемые платформы
 
+### Android
 - `arm64-v8a`
 - `x86_64`
 - `armeabi-v7a`
+
+### Windows
+- `x86_64`
+- `arm64`
 
 ## Лицензия
 
