@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/services/update_service.dart';
 import '../core/constants/app_constants.dart';
 import 'vpn_provider.dart';
@@ -59,18 +60,19 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> checkForUpdate() async {
-    if (Platform.isWindows) {
-      state = UpdateError('Обновления для Windows будут через MSIX Store');
-      return;
-    }
     state = UpdateChecking();
     try {
       final pkgInfo = await PackageInfo.fromPlatform();
       final currentVersion = pkgInfo.version;
-      final abi = await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
       final vpn = ref.read(vpnProvider);
       final settings = ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null);
       final channel = settings?.updateChannel ?? UpdateChannel.stable;
+      final isWindows = Platform.isWindows;
+
+      final abi = isWindows
+          ? ''
+          : await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
+
       final update = await _service.checkForUpdate(
         currentVersion,
         abi,
@@ -79,16 +81,14 @@ class UpdateNotifier extends Notifier<UpdateState> {
         socksUser: vpn.activeSocksUser,
         socksPassword: vpn.activeSocksPassword,
         force: true,
+        isWindows: isWindows,
       );
       if (update == null) {
         state = UpdateError('Не удалось получить данные о релизе');
         return;
       }
-      final path = await _apkPath(update.version, abi);
-      await _cleanOldApks(keepPath: path);
       if (_isNewer(update.version, currentVersion)) {
-        final resumable = File(path).existsSync() ? File(path).lengthSync() : 0;
-        state = UpdateAvailable(update, resumableBytes: resumable);
+        state = UpdateAvailable(update);
       } else {
         state = UpdateUpToDate(update);
       }
@@ -98,7 +98,10 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> reinstall(UpdateInfo info) async {
-    if (Platform.isWindows) return;
+    if (Platform.isWindows) {
+      _openUrl(info.downloadUrl);
+      return;
+    }
     final abi = await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
     final path = await _apkPath(info.version, abi);
     if (File(path).existsSync()) await File(path).delete();
@@ -106,7 +109,10 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> startDownload(UpdateInfo info) async {
-    if (Platform.isWindows) return;
+    if (Platform.isWindows) {
+      _openUrl(info.downloadUrl);
+      return;
+    }
     final abi = await _channel.invokeMethod<String>('getAbi') ?? 'arm64-v8a';
     final path = await _apkPath(info.version, abi);
     _currentApkPath = path;
@@ -148,7 +154,10 @@ class UpdateNotifier extends Notifier<UpdateState> {
   }
 
   Future<void> installApk(String filePath) async {
-    if (Platform.isWindows) return;
+    if (Platform.isWindows) {
+      _openUrl(filePath);
+      return;
+    }
     try {
       await _channel.invokeMethod<void>('installApk', {'filePath': filePath});
       await _cleanOldApks(keepPath: filePath);
@@ -156,6 +165,11 @@ class UpdateNotifier extends Notifier<UpdateState> {
     } on PlatformException catch (e) {
       state = UpdateError(e.message ?? 'Ошибка установки');
     }
+  }
+
+  void _openUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri != null) launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   bool _isNewer(String a, String b) {

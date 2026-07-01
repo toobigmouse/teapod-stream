@@ -32,9 +32,9 @@ class DownloadProgress {
 
 class UpdateService {
   static const _githubApiLatest =
-      'https://api.github.com/repos/Wendor/teapod-stream/releases/latest';
+      'https://api.github.com/repos/toobigmouse/teapod-stream/releases/latest';
   static const _githubApiList =
-      'https://api.github.com/repos/Wendor/teapod-stream/releases?per_page=10';
+      'https://api.github.com/repos/toobigmouse/teapod-stream/releases?per_page=10';
 
   HttpClient _makeClient({int? socksPort, String? user, String? password}) {
     final client = HttpClient();
@@ -51,7 +51,9 @@ class UpdateService {
     return client;
   }
 
-  /// Returns null if already up to date or no matching APK asset found.
+  /// Returns null if already up to date or no matching asset found.
+  /// On Android [abi] is the device ABI (arm64-v8a, armeabi-v7a, x86_64).
+  /// On Windows pass an empty string to find the portable ZIP.
   /// Pass [socksPort] to route through the active VPN SOCKS5 proxy.
   /// Pass [force] to skip version comparison (for reinstall).
   Future<UpdateInfo?> checkForUpdate(
@@ -62,6 +64,7 @@ class UpdateService {
     String? socksUser,
     String? socksPassword,
     bool force = false,
+    bool isWindows = false,
   }) async {
     final client = _makeClient(
         socksPort: socksPort, user: socksUser, password: socksPassword);
@@ -74,6 +77,30 @@ class UpdateService {
       if (!force && _compareVersions(tagName, currentVersion) <= 0) return null;
       final changelog = releaseJson['body'] as String?;
       final assets = releaseJson['assets'] as List<dynamic>? ?? [];
+
+      if (isWindows) {
+        // Windows: find portable ZIP asset
+        for (final asset in assets) {
+          final name = asset['name'] as String? ?? '';
+          if (name.contains('portable') && name.endsWith('.zip')) {
+            final url = asset['browser_download_url'] as String?;
+            final size = asset['size'] as int?;
+            if (url != null) {
+              return UpdateInfo(
+                version: tagName,
+                downloadUrl: url,
+                totalBytes: size,
+                changelog: (changelog != null && changelog.trim().isNotEmpty)
+                    ? changelog.trim()
+                    : null,
+              );
+            }
+          }
+        }
+        return null;
+      }
+
+      // Android: find APK matching device ABI
       for (final asset in assets) {
         final name = asset['name'] as String? ?? '';
         if (name.contains(abi) && name.endsWith('.apk')) {
