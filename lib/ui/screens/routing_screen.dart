@@ -26,13 +26,9 @@ class RoutingScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.pop(context),
-          tooltip: 'Назад',
-        ),
         title: const Text('Маршрутизация'),
         centerTitle: true,
+        automaticallyImplyLeading: false,
       ),
       body: SafeArea(
         child: settingsAsync.when(
