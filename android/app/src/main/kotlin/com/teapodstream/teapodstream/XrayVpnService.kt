@@ -256,6 +256,7 @@ class XrayVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_DISCONNECT -> {
+                ensureForeground()
                 userRequestedDisconnect.set(true)
                 try { File(filesDir, "user_disconnected.flag").createNewFile() } catch (_: Exception) {}
                 // Signal disconnecting immediately so the button turns yellow
@@ -376,6 +377,7 @@ class XrayVpnService : VpnService() {
         val configFile = File(filesDir, "xray_config.json")
         if (params != null && configFile.exists()
             && !userRequestedDisconnect.get()
+            && !File(filesDir, "user_disconnected.flag").exists()
             && !isRunning.get()
         ) {
             val needsPermission = !params.proxyOnly && VpnService.prepare(this) != null
@@ -1133,6 +1135,10 @@ class XrayVpnService : VpnService() {
                     if (System.currentTimeMillis() >= deadline) {
                         log("info", "reconnectInternal: internet wait expired, launching CONNECT_QUICK anyway")
                     }
+                    if (userRequestedDisconnect.get()) {
+                        log("info", "reconnectInternal: cancelled (user disconnect)")
+                        return@Thread
+                    }
                     val intent = Intent(this@XrayVpnService, XrayVpnService::class.java)
                         .setAction(ACTION_CONNECT_QUICK)
                     startService(intent)
@@ -1509,7 +1515,12 @@ class XrayVpnService : VpnService() {
         // Save credentials to file for CONNECT_QUICK reconnect
         try {
             val credsFile = File(filesDir, "socks_creds.json")
-            credsFile.writeText("""{"port":$socksPort,"user":"$socksUser","pass":"$socksPassword"}""")
+            val credsJson = org.json.JSONObject().apply {
+                put("port", socksPort)
+                put("user", socksUser)
+                put("pass", socksPassword)
+            }
+            credsFile.writeText(credsJson.toString())
         } catch (e: Exception) {
             log("warning", "Failed to save socks_creds: ${e.message}")
         }

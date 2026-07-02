@@ -10,3 +10,6 @@
 
 # Keep other JNI boundaries if necessary
 -keep class com.teapodstream.teapodstream.** { *; }
+
+# Keep teapod-core library classes
+-keep class teapodcore.** { *; }
