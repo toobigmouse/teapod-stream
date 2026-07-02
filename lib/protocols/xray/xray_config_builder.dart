@@ -510,21 +510,21 @@ class XrayConfigBuilder {
       'tag': 'tun-in',
       'protocol': 'tun',
       'settings': {
+        'name': 'xray0',
         'address': [tunAddress],
-        'autoRoute': false,
+        'autoRoute': true,
         'strictRoute': true,
-        'stack': 'gvisor',
+        'stack': 'system',
         'sniff': true,
         'domainOverride': ['http', 'https'],
-        'mtu': 9000,
-      },
-      'sniffing': {
-        'enabled': true,
-        'destOverride': ['http', 'tls'],
+        'mtu': 1500,
       },
     });
 
     base['inbounds'] = inbounds;
+
+    // Enable FakeDNS for domain-based routing in TUN mode
+    _enableFakeDns(base, inbounds);
 
     // Update routing: tun-in traffic goes to proxy
     final rt = base['routing'] as Map<String, dynamic>;
@@ -570,6 +570,21 @@ class XrayConfigBuilder {
     return base;
   }
 
+  /// Enable FakeDNS in the config for domain-based routing in TUN mode.
+  static void _enableFakeDns(Map<String, dynamic> cfg, List<Map<String, dynamic>> inbounds) {
+    final dns = cfg['dns'] as Map<String, dynamic>;
+    final servers = List<dynamic>.from(dns['servers'] as List);
+    servers.insert(0, {'address': 'fakedns'});
+    // fakedns must be the fallback — real DNS servers come after
+    dns['servers'] = servers;
+    final tunSettings = inbounds[0]['settings'] as Map<String, dynamic>;
+    tunSettings['fakedns'] = true;
+    // Add fakedns to domainOverride — required for TUN mode
+    final override = List<String>.from(tunSettings['domainOverride'] as List? ?? ['http', 'https']);
+    if (!override.contains('fakedns')) override.add('fakedns');
+    tunSettings['domainOverride'] = override;
+  }
+
   /// Merge app settings into a pre-built raw xray config from a managed subscription.
   /// App settings take priority: inbounds, dns, log are replaced; app routing rules
   /// are prepended (with higher priority than server rules).
@@ -608,17 +623,14 @@ class XrayConfigBuilder {
           'tag': 'tun-in',
           'protocol': 'tun',
           'settings': {
+            'name': 'xray0',
             'address': ['10.0.0.1/24'],
-            'autoRoute': false,
+            'autoRoute': true,
             'strictRoute': true,
-            'stack': 'gvisor',
+            'stack': 'system',
             'sniff': true,
             'domainOverride': ['http', 'https'],
-            'mtu': 9000,
-          },
-          'sniffing': {
-            'enabled': true,
-            'destOverride': ['http', 'tls'],
+            'mtu': 1500,
           },
         });
       }
@@ -713,6 +725,11 @@ class XrayConfigBuilder {
           ...serverRouting,
           'rules': [...appRules, ...serverRules],
         };
+      }
+
+      // Enable FakeDNS for TUN mode
+      if (!options.proxyOnly) {
+        _enableFakeDns(cfg, List<Map<String, dynamic>>.from(inbounds));
       }
 
       return jsonEncode(cfg);

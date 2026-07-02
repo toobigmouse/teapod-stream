@@ -35,15 +35,21 @@ class WindowsXrayEngine implements VpnEngine {
 
     if (isMsix) {
       // MSIX sandbox blocks executing from Program Files — copy to %TEMP%
-      final srcExe = '$exeDir\\data\\flutter_assets\\assets\\binaries\\xray.exe';
+      final srcDir = '$exeDir\\data\\flutter_assets\\assets\\binaries';
+      final srcExe = '$srcDir\\xray.exe';
+      final srcDll = '$srcDir\\wintun.dll';
       final destExe = '$tmpDir\\teapod_xray.exe';
+      final destDll = '$tmpDir\\wintun.dll';
       final destFile = File(destExe);
 
       if (!await destFile.exists() || await _shouldReCopy(destFile, srcExe)) {
         try {
           await File(srcExe).copy(destExe);
+          if (await File(srcDll).exists()) {
+            await File(srcDll).copy(destDll);
+          }
         } catch (e) {
-          throw Exception('Failed to copy xray.exe from MSIX to temp: $e');
+          throw Exception('Failed to copy xray.exe/wintun.dll from MSIX to temp: $e');
         }
       }
       _xrayPath = destExe;
@@ -120,15 +126,29 @@ class WindowsXrayEngine implements VpnEngine {
     _debugLog('binary resolved: $_xrayPath');
     AppLogger.log('ENGINE', 'binary: $_xrayPath');
 
+    // TUN mode requires admin rights on Windows (wintun creates adapter)
+    if (!options.proxyOnly && !await _isAdmin()) {
+      AppLogger.log('ENGINE', 'TUN mode requires admin rights — falling back to proxy-only');
+      _debugLog('not admin, TUN mode unavailable');
+      // Option 1: throw with clear error
+      throw Exception('Для TUN-режима нужны права администратора. '
+          'Запустите приложение от имени администратора или включите "Только прокси" в настройках.');
+    }
+
     _socksPort = options.socksPort;
     _socksUser = options.socksUser;
     _socksPassword = options.socksPassword;
 
-    final configJson = config.rawXrayConfig != null
-        ? XrayConfigBuilder.mergeWithRaw(config.rawXrayConfig!, options)
-        : (options.proxyOnly
-            ? XrayConfigBuilder.buildJson(config, options)
-            : XrayConfigBuilder.buildTunJson(config, options));
+    String configJson;
+    if (config.rawXrayConfig != null) {
+      configJson = XrayConfigBuilder.mergeWithRaw(config.rawXrayConfig!, options);
+    } else if (options.proxyOnly) {
+      configJson = XrayConfigBuilder.buildJson(config, options);
+    } else {
+      configJson = XrayConfigBuilder.buildTunJson(config, options);
+      // Add sockopt to direct outbound to bind to physical interface (prevents routing loop)
+      configJson = await _addDirectOutboundSockopt(configJson);
+    }
 
     AppLogger.log('ENGINE', 'configJson length: ${configJson.length}');
     AppLogger.log('ENGINE', 'config preview: ${configJson.substring(0, configJson.length > 500 ? 500 : configJson.length)}');
@@ -204,21 +224,30 @@ class WindowsXrayEngine implements VpnEngine {
 
   Future<void> _setupTunRoutes() async {
     try {
-      // Find xray0 adapter index
-      AppLogger.log('TUN', 'finding xray0 adapter...');
-      final result = await Process.run('powershell', [
-        '-NoProfile', '-Command',
-        '(Get-NetAdapter | Where-Object { \$_.Name -eq "xray0" }).InterfaceIndex'
-      ]);
-      final ifIndex = int.tryParse((result.stdout as String).trim());
+      // Find TUN adapter index — try "xray0" first, then "xray"
+      AppLogger.log('TUN', 'finding TUN adapter...');
+      int? ifIndex;
+      for (final name in ['xray0', 'xray']) {
+        final result = await Process.run('powershell', [
+          '-NoProfile', '-Command',
+          '(Get-NetAdapter | Where-Object { \$_.Name -eq "$name" }).InterfaceIndex'
+        ]);
+        ifIndex = int.tryParse((result.stdout as String).trim());
+        if (ifIndex != null) {
+          _debugLog('TUN: adapter "$name" found, ifIndex=$ifIndex');
+          AppLogger.log('TUN', 'adapter "$name" found, ifIndex=$ifIndex');
+          break;
+        }
+        _debugLog('TUN: adapter "$name" not found');
+      }
       if (ifIndex == null) {
-        _debugLog('TUN: xray0 adapter not found');
-        AppLogger.log('TUN', 'xray0 adapter not found, stdout: ${(result.stdout as String).trim()}, stderr: ${(result.stderr as String).trim()}');
+        AppLogger.log('TUN', 'TUN adapter not found (tried xray0, xray)');
+        _debugLog('TUN: adapter not found');
         return;
       }
       _tunIfIndex = ifIndex;
-      _debugLog('TUN: xray0 ifIndex=$ifIndex');
-      AppLogger.log('TUN', 'xray0 ifIndex=$ifIndex');
+      _debugLog('TUN: adapter ifIndex=$ifIndex');
+      AppLogger.log('TUN', 'adapter ifIndex=$ifIndex');
 
       // Save original default gateway
       final gwResult = await Process.run('powershell', [
@@ -232,7 +261,7 @@ class WindowsXrayEngine implements VpnEngine {
       // Find the physical adapter's interface index (not xray0)
       final physIfResult = await Process.run('powershell', [
         '-NoProfile', '-Command',
-        '(Get-NetAdapter | Where-Object { \$_.Status -eq "Up" -and \$_.Name -ne "xray0" -and \$_.InterfaceDescription -notlike "*Tunnel*" -and \$_.InterfaceDescription -notlike "*Wintun*" } | Select-Object -First 1).InterfaceIndex'
+        '(Get-NetAdapter | Where-Object { \$_.Status -eq "Up" -and \$_.Name -ne "xray0" -and \$_.Name -ne "xray" -and \$_.InterfaceDescription -notlike "*Tunnel*" -and \$_.InterfaceDescription -notlike "*Wintun*" } | Select-Object -First 1).InterfaceIndex'
       ]);
       final physIfIndex = int.tryParse((physIfResult.stdout as String).trim());
       AppLogger.log('TUN', 'physical adapter ifIndex=$physIfIndex');
@@ -282,7 +311,7 @@ class WindowsXrayEngine implements VpnEngine {
         '-NoProfile', '-Command',
         'Get-NetRoute -InterfaceIndex $ifIndex | Select-Object DestinationPrefix,NextHop | Format-Table -AutoSize'
       ]);
-      AppLogger.log('TUN', 'routes on xray0:\n${(routeCheck.stdout as String).trim()}');
+      AppLogger.log('TUN', 'routes on adapter:\n${(routeCheck.stdout as String).trim()}');
 
       // Set DNS to TUN gateway so queries go through xray's DNS module
       final dnsResult = await Process.run('powershell', [
@@ -300,11 +329,13 @@ class WindowsXrayEngine implements VpnEngine {
       AppLogger.log('TUN', 'DNS after set: ${(dnsCheck.stdout as String).trim()}');
 
       // Verify the /32 bypass routes exist
-      final verifyRoutes = await Process.run('powershell', [
-        '-NoProfile', '-Command',
-        'Get-NetRoute -DestinationPrefix "$proxyAddr/32","1.1.1.1/32" | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric | Format-Table -AutoSize'
-      ]);
-      AppLogger.log('TUN', 'bypass routes:\n${(verifyRoutes.stdout as String).trim()}');
+      if (proxyAddr != null) {
+        final verifyRoutes = await Process.run('powershell', [
+          '-NoProfile', '-Command',
+          'Get-NetRoute -DestinationPrefix "$proxyAddr/32","1.1.1.1/32" | Select-Object DestinationPrefix,NextHop,InterfaceIndex,RouteMetric | Format-Table -AutoSize'
+        ]);
+        AppLogger.log('TUN', 'bypass routes:\n${(verifyRoutes.stdout as String).trim()}');
+      }
     } catch (e) {
       _debugLog('TUN route setup failed: $e');
       AppLogger.log('TUN', 'route setup FAILED: $e');
@@ -525,6 +556,58 @@ class WindowsXrayEngine implements VpnEngine {
   @override
   Future<List<Map<String, int>>> getStatsHistory() async {
     return [];
+  }
+
+  /// Add `sendThrough` to the `direct` (freedom) outbound to bind it to the
+  /// physical adapter's IP, preventing the routing loop on Windows.
+  Future<String> _addDirectOutboundSockopt(String configJson) async {
+    try {
+      final physIp = await _getPhysicalAdapterIp();
+      if (physIp == null || physIp.isEmpty) return configJson;
+
+      final cfg = jsonDecode(configJson) as Map<String, dynamic>;
+      final outbounds = cfg['outbounds'] as List?;
+      if (outbounds == null) return configJson;
+
+      for (final ob in outbounds) {
+        if (ob is! Map) continue;
+        if (ob['tag'] != 'direct') continue;
+        ob['sendThrough'] = physIp;
+        break;
+      }
+      return jsonEncode(cfg);
+    } catch (e) {
+      _debugLog('TUN: addDirectOutboundSockopt failed: $e');
+      return configJson;
+    }
+  }
+
+  /// Get the IPv4 address of the physical network adapter (not xray0/xray).
+  Future<String?> _getPhysicalAdapterIp() async {
+    try {
+      final result = await Process.run('powershell', [
+        '-NoProfile', '-Command',
+        '(Get-NetAdapter | Where-Object { \$_.Status -eq "Up" -and \$_.Name -ne "xray0" -and \$_.Name -ne "xray" -and \$_.InterfaceDescription -notlike "*Tunnel*" -and \$_.InterfaceDescription -notlike "*Wintun*" -and \$_.InterfaceDescription -notlike "*Hyper-V*" -and \$_.InterfaceDescription -notlike "*Virtual*" } | Sort-Object InterfaceIndex | Get-NetIPAddress -AddressFamily IPv4 | Select-Object -First 1 -ExpandProperty IPAddress)'
+      ]);
+      final ip = (result.stdout as String).trim();
+      return ip.isNotEmpty ? ip : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Check if the current process has admin rights (Windows only).
+  /// Uses PowerShell to check the group membership for the Admin SID.
+  Future<bool> _isAdmin() async {
+    try {
+      final result = await Process.run('powershell', [
+        '-NoProfile', '-Command',
+        '[bool](([System.Security.Principal.WindowsIdentity]::GetCurrent()).Groups -match "S-1-5-32-544")'
+      ]);
+      return (result.stdout as String).trim().toLowerCase() == 'true';
+    } catch (_) {
+      return false;
+    }
   }
 
 }

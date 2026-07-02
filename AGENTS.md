@@ -37,6 +37,18 @@ Run `./build.sh binaries` first — without teapod-core.aar in `android/app/libs
 - **x86 lib excluded** in packaging (`lib/x86/**`) — not supported by teapod-core.
 - Release signing uses debug keystore by default.
 
+## Windows specifics (xray.exe)
+
+- **TUN mode** requires admin rights (`_isAdmin()`); throws clear error otherwise.
+- **Stack**: `system` (not `gvisor`) + MTU 1500 for Windows compatibility.
+- **autoRoute: true** is a no-op on xray 26.3.27 for Windows — WFP rules are not created.
+- **Routing loop prevention**: `sendThrough` is added to the `direct` (freedom) outbound with the physical adapter's IP. This binds sockets to the physical adapter, preventing TUN loop for TCP/UDP.
+  - `sockopt.interface` causes `WSAENOBUFS` on Windows with Russian locale — do not use.
+- **ICMP (ping)** does not work through TUN on Windows — xray only handles TCP/UDP in TUN mode.
+- **Adapter naming**: The xray TUN adapter is named `"xray0"` (previously sometimes `"xray"` — fallback lookup exists).
+- **MSIX**: `wintun.dll` is copied alongside `xray.exe` from assets.
+- **Binary source**: `assets/binaries/windows/` — downloaded by `./build.sh binaries`.
+
 ## Notable conventions
 
 - Tab bar UI uses custom `CustomPainter` for icons (no `flutter_svg`).
