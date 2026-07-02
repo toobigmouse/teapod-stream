@@ -194,8 +194,8 @@ class XrayVpnService : VpnService() {
         }
     }
 
-    private var tunInterface: ParcelFileDescriptor? = null
-    private var statsThread: Thread? = null
+    @Volatile private var tunInterface: ParcelFileDescriptor? = null
+    @Volatile private var statsThread: Thread? = null
     private val isRunning = AtomicBoolean(false)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var lastUnderlyingNetwork: Network? = null
@@ -209,8 +209,8 @@ class XrayVpnService : VpnService() {
     @Volatile private var blockQuicEnabled = false
     private var proxyOnlyMode = false
     private val networkChangeHandler = Handler(Looper.getMainLooper())
-    private var pendingNetworkRunnable: Runnable? = null
-    private var heartbeatThread: Thread? = null
+    @Volatile private var pendingNetworkRunnable: Runnable? = null
+    @Volatile private var heartbeatThread: Thread? = null
     private val heartbeatFailures = AtomicInteger(0)
 
     private val tunAddress = "10.120.230.1"

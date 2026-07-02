@@ -35,3 +35,13 @@
 | A4 | **`startForegroundService` без `startForeground()`** — в `ACTION_DISCONNECT` не вызывалась `ensureForeground()`, Android 8+ убивает процесс | `XrayVpnService.kt:258` | ✅ |
 | A5 | **TOCTOU race** — `reconnectInternal` мог запустить CONNECT_QUICK даже после того, как пользователь нажал Disconnect | `XrayVpnService.kt:1136` | ✅ |
 | A6 | `allowIcmp` default `false` в `ConnectionParams` — несовместим с `true` в настройках | `ConnectionParams.kt:55` | ✅ |
+|
+| ## Batch 4 — race conditions, data loss, resource leaks |
+|
+| ID | Проблема | Файл | Статус |
+|---|---|---|---|
+| D1 | **Data loss** — `_editSubscriptionUrl` удалял старую подписку ДО fetch новой; при ошибке данные терялись навсегда | `lib/ui/screens/configs_screen.dart:646` | ✅ |
+| D2 | **Missing \`@Volatile\`** — `tunInterface`, `statsThread` гонка между `startVpn`/`stopVpn` (утечка FD, пропущенный interrupt) | `XrayVpnService.kt:197-198` | ✅ |
+| D3 | **Missing \`@Volatile\`** — `pendingNetworkRunnable` гонка между `ConnectivityManager` callback и `stopVpn` (спонтанный реконнект) | `XrayVpnService.kt:212` | ✅ |
+| D4 | **Missing \`@Volatile\`** — `heartbeatThread` гонка между `startHeartbeat`/`stopHeartbeat` (пропущенный interrupt) | `XrayVpnService.kt:213` | ✅ |
+| D5 | **Утечка \`http.Client\`** — 3 вызова `http.get()`/`http.head()` без `.close()` | `profile_provider.dart:203`, `deeplink_router.dart:106`, `geo_provider.dart:120` | ✅ |

@@ -103,14 +103,19 @@ class DeeplinkRouter {
     if (result.source != DeeplinkSource.url || result.urlValue == null) return null;
 
     try {
-      final response = await http.get(Uri.parse(result.urlValue!)).timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return null;
+      final client = http.Client();
+      try {
+        final response = await client.get(Uri.parse(result.urlValue!)).timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) return null;
 
-      switch (result.type) {
-        case DeeplinkType.profile:
-          return ProfileBundle.fromJson(_parseJson(response.body));
-        case DeeplinkType.connections:
-          return ConnectionsBundle.fromJson(_parseJson(response.body));
+        switch (result.type) {
+          case DeeplinkType.profile:
+            return ProfileBundle.fromJson(_parseJson(response.body));
+          case DeeplinkType.connections:
+            return ConnectionsBundle.fromJson(_parseJson(response.body));
+        }
+      } finally {
+        client.close();
       }
     } catch (_) {
       return null;

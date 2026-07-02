@@ -117,8 +117,13 @@ class GeoNotifier extends Notifier<GeoState> {
   }
 
   Future<int> _contentLength(String url) async {
-    final resp = await http.head(Uri.parse(url));
-    return int.tryParse(resp.headers['content-length'] ?? '') ?? -1;
+    final client = http.Client();
+    try {
+      final resp = await client.head(Uri.parse(url));
+      return int.tryParse(resp.headers['content-length'] ?? '') ?? -1;
+    } finally {
+      client.close();
+    }
   }
 
   Future<void> _downloadFile({

@@ -200,11 +200,15 @@ class ProfileNotifier extends AsyncNotifier<ProfileState> {
 
     ProfileBundle bundle;
     try {
-      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return null;
-
-      bundle = ProfileBundle.fromJson(
-          jsonDecode(response.body) as Map<String, dynamic>);
+      final client = http.Client();
+      try {
+        final response = await client.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) return null;
+        bundle = ProfileBundle.fromJson(
+            jsonDecode(response.body) as Map<String, dynamic>);
+      } finally {
+        client.close();
+      }
     } catch (e) {
       return null;
     }

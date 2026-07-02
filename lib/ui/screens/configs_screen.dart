@@ -643,9 +643,11 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
     );
     if (ok == true && controller.text.trim().isNotEmpty) {
       final updatedUrl = controller.text.trim();
-      await ConfigNotifier.storage.removeSubscription(sub.id);
       try {
+        // Fetch from new URL FIRST — old subscription stays intact on failure
         await ref.read(configProvider.notifier).addSubscriptionFromUrl(updatedUrl, name: sub.name);
+        // Success: remove the old subscription
+        await ref.read(configProvider.notifier).removeSubscription(sub.id);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Подписка обновлена по новому URL')));
