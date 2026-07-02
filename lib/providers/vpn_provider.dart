@@ -116,39 +116,47 @@ class VpnNotifier extends Notifier<VpnState2> {
 
     // Auto-refresh subscriptions: timer fires hourly, staleness check uses configured interval
     _subRefreshTimer = Timer.periodic(const Duration(hours: 1), (_) async {
-      final settings = ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null);
-      if (settings?.subAutoRefresh != true) return;
-      await ref.read(configProvider.notifier)
-          .refreshStaleSubscriptions(intervalHours: settings!.subAutoRefreshHours);
+      try {
+        final settings = ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null);
+        if (settings?.subAutoRefresh != true) return;
+        await ref.read(configProvider.notifier)
+            .refreshStaleSubscriptions(intervalHours: settings!.subAutoRefreshHours);
+      } catch (e) {
+        AppLogger.log('VPN', 'sub refresh timer error: $e');
+      }
     });
 
     // Sync state on init (for case when VPN is already running from tile/notification)
     Future.microtask(() async {
-      // Auto-refresh stale subscriptions on startup
-      final settings = ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null);
-      if (settings?.subAutoRefresh == true) {
-        await ref.read(configProvider.notifier)
-            .refreshStaleSubscriptions(intervalHours: settings!.subAutoRefreshHours);
-      }
+      try {
+        // Auto-refresh stale subscriptions on startup
+        final settings = ref.read(settingsProvider).maybeWhen(data: (d) => d, orElse: () => null);
+        if (settings?.subAutoRefresh == true) {
+          await ref.read(configProvider.notifier)
+              .refreshStaleSubscriptions(intervalHours: settings!.subAutoRefreshHours);
+        }
 
-      final vpnState = await _engine.getVpnState();
-      if (vpnState.state == VpnState.connected && vpnState.socksPort > 0) {
-        if (vpnState.connectedAtMs > 0) {
-          _connectedAt = DateTime.fromMillisecondsSinceEpoch(vpnState.connectedAtMs);
+        final vpnState = await _engine.getVpnState();
+        if (vpnState.state == VpnState.connected && vpnState.socksPort > 0) {
+          if (vpnState.connectedAtMs > 0) {
+            _connectedAt = DateTime.fromMillisecondsSinceEpoch(vpnState.connectedAtMs);
+          }
+          state = VpnState2(
+            connectionState: VpnState.connected,
+            activeSocksPort: vpnState.socksPort,
+            activeSocksUser: vpnState.socksUser,
+            activeSocksPassword: vpnState.socksPassword,
+          );
+          // Restore log history from persisted file
+          final logEntries = await _engine.getLogs();
+          if (logEntries.isNotEmpty) {
+            ref.read(logServiceProvider.notifier).loadFromEntries(logEntries);
+          }
+          // Also fetch initial stats
+          _startStatsPolling();
         }
-        state = VpnState2(
-          connectionState: VpnState.connected,
-          activeSocksPort: vpnState.socksPort,
-          activeSocksUser: vpnState.socksUser,
-          activeSocksPassword: vpnState.socksPassword,
-        );
-        // Restore log history from persisted file
-        final logEntries = await _engine.getLogs();
-        if (logEntries.isNotEmpty) {
-          ref.read(logServiceProvider.notifier).loadFromEntries(logEntries);
-        }
-        // Also fetch initial stats
-        _startStatsPolling();
+      } catch (e) {
+        AppLogger.log('VPN', 'init sync error: $e');
       }
     });
 

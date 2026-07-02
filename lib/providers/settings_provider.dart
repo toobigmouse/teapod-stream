@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/services/settings_service.dart';
 import 'profile_provider.dart';
@@ -17,7 +18,10 @@ class SettingsNotifier extends AsyncNotifier<AppSettings> {
     state = AsyncData(settings);
 
     // Keep profile snapshot in sync
-    ref.read(profileProvider.notifier).syncActiveSettings(settings);
+    unawaited(
+      ref.read(profileProvider.notifier).syncActiveSettings(settings)
+          .catchError((_) {}),
+    );
   }
 
   Future<void> cleanGhostPackages(Set<String> installedPackages) async {
