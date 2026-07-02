@@ -140,8 +140,9 @@ class ProfileNotifier extends AsyncNotifier<ProfileState> {
     state = AsyncData(current.copyWith(profiles: profiles));
   }
 
-  ProfileBundle exportBundle(String profileId, {bool includeConnections = false}) {
-    final current = _current!;
+  ProfileBundle? exportBundle(String profileId, {bool includeConnections = false}) {
+    final current = _current;
+    if (current == null) return null;
     final profile = current.profiles.firstWhere((p) => p.id == profileId);
     if (!includeConnections) {
       return ProfileBundle(exportedAt: DateTime.now(), profile: profile);

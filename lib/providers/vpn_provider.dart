@@ -203,7 +203,7 @@ class VpnNotifier extends Notifier<VpnState2> {
             final pass = event['socksPassword'] as String? ?? '';
             final connectedAtMs = (event['connectedAtMs'] as num?)?.toInt() ?? 0;
             if (connectedAtMs > 0) {
-              _connectedAt ??= DateTime.fromMillisecondsSinceEpoch(connectedAtMs);
+              _connectedAt = DateTime.fromMillisecondsSinceEpoch(connectedAtMs);
             }
             state = state.copyWith(
               activeSocksPort: port,
@@ -244,7 +244,7 @@ class VpnNotifier extends Notifier<VpnState2> {
 
   void _onNativeState(VpnState nativeState, {bool isReconnect = false}) {
     if (nativeState == VpnState.connected) {
-      _connectedAt ??= DateTime.now();
+      _connectedAt = DateTime.now();
       _connectTimeout?.cancel();
       _connectTimeout = null;
       // Start polling as backup for when EventChannel doesn't deliver (app in background)

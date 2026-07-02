@@ -103,7 +103,7 @@ final installedAppsProvider =
     }
   }
 
-  final settings = ref.read(settingsProvider).maybeWhen(
+  final settings = ref.watch(settingsProvider).maybeWhen(
       data: (d) => d, orElse: () => null);
   final excluded = settings?.excludedPackages ?? {};
 

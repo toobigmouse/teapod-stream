@@ -200,6 +200,7 @@ class _AddConfigScreenState extends ConsumerState<AddConfigScreen> {
       context,
       MaterialPageRoute(builder: (_) => const QrScanScreen()),
     ).then((value) {
+      if (!mounted) return;
       if (value != null && value is String) {
         setState(() => _uriController.text = value);
         _processUri(value);

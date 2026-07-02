@@ -436,6 +436,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
     if (ok == true && controller.text.trim().isNotEmpty) {
       ref.read(configProvider.notifier).updateConfig(config.copyWith(name: controller.text.trim()));
     }
+    controller.dispose();
   }
 
   Future<void> _editConfig(BuildContext context, WidgetRef ref, VpnConfig config) async {
@@ -445,7 +446,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Редактировать URI'),
         content: SizedBox(
-          width: MediaQuery.of(context).size.width * 0.8,
+          width: MediaQuery.of(ctx).size.width * 0.8,
           child: TextField(
             controller: controller,
             maxLines: 5,
@@ -466,10 +467,8 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
     if (ok == true && controller.text.trim().isNotEmpty) {
       final updated = VlessParser.parseUri(controller.text.trim());
       if (updated != null) {
-        final renamed = VpnConfig(
-          id: config.id,
+        final renamed = config.copyWith(
           name: updated.name,
-          protocol: updated.protocol,
           address: updated.address,
           port: updated.port,
           uuid: updated.uuid,
@@ -479,15 +478,26 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
           wsPath: updated.wsPath,
           wsHost: updated.wsHost,
           grpcServiceName: updated.grpcServiceName,
+          fingerprint: updated.fingerprint,
           publicKey: updated.publicKey,
           shortId: updated.shortId,
           spiderX: updated.spiderX,
+          postQuantumKey: updated.postQuantumKey,
           flow: updated.flow,
           encryption: updated.encryption,
-          createdAt: config.createdAt,
+          method: updated.method,
+          password: updated.password,
+          ssPrefix: updated.ssPrefix,
+          obfsPassword: updated.obfsPassword,
+          allowInsecure: updated.allowInsecure,
+          pinSHA256: updated.pinSHA256,
+          xhttpMode: updated.xhttpMode,
+          xhttpExtra: updated.xhttpExtra,
+          finalmask: updated.finalmask,
+          alpn: updated.alpn,
+          ech: updated.ech,
+          rawXrayConfig: updated.rawXrayConfig,
           rawUri: controller.text.trim(),
-          latencyMs: config.latencyMs,
-          subscriptionId: config.subscriptionId,
         );
         ref.read(configProvider.notifier).updateConfig(renamed);
       } else if (context.mounted) {
@@ -496,6 +506,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
         );
       }
     }
+    controller.dispose();
   }
 
   Future<void> _deleteConfig(BuildContext context, WidgetRef ref, VpnConfig config) async {
@@ -600,6 +611,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
     if (ok == true && controller.text.trim().isNotEmpty) {
       await ref.read(configProvider.notifier).renameSubscription(sub.id, controller.text.trim());
     }
+    controller.dispose();
   }
 
   Future<void> _editSubscriptionUrl(BuildContext context, WidgetRef ref, Subscription sub) async {
@@ -609,7 +621,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Изменить URL подписки'),
         content: SizedBox(
-          width: MediaQuery.of(context).size.width * 0.8,
+          width: MediaQuery.of(ctx).size.width * 0.8,
           child: TextField(
             controller: controller,
             maxLines: 3,
@@ -645,6 +657,7 @@ class _ConfigsScreenState extends ConsumerState<ConfigsScreen> {
         }
       }
     }
+    controller.dispose();
   }
 
   Future<void> _deleteSubscription(BuildContext context, WidgetRef ref, Subscription sub) async {

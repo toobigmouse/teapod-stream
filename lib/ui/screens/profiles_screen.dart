@@ -419,6 +419,7 @@ void _profShowImportDialog(BuildContext context, WidgetRef ref, TeapodTokens t) 
       BuildContext context, WidgetRef ref, Profile profile, TeapodTokens t) {
     final bundle =
         ref.read(profileProvider.notifier).exportBundle(profile.id);
+    if (bundle == null) return;
     final deeplink = bundle.toDeeplink();
 
     showModalBottomSheet(

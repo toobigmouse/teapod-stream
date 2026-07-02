@@ -225,7 +225,11 @@ class ConfigNotifier extends AsyncNotifier<ConfigState> {
     }
 
     // Set first new config as active if none active
-    if (state.value?.activeConfigId == null && newConfigs.isNotEmpty) {
+    final noActive = state.maybeWhen(
+      data: (d) => d.activeConfigId == null,
+      orElse: () => false,
+    );
+    if (noActive && newConfigs.isNotEmpty) {
       await setActiveConfig(newConfigs.first.id);
     }
   }
@@ -270,7 +274,11 @@ class ConfigNotifier extends AsyncNotifier<ConfigState> {
       return DateTime.now().difference(s.lastFetchedAt!) > threshold;
     }).toList();
     for (final sub in stale) {
-      await addSubscriptionFromUrl(sub.url);
+      try {
+        await addSubscriptionFromUrl(sub.url);
+      } catch (_) {
+        // continue with remaining subscriptions
+      }
     }
   }
 
@@ -351,11 +359,18 @@ class ConfigNotifier extends AsyncNotifier<ConfigState> {
         createdAt: DateTime.now(),
         rawUri: c.rawUri,
         latencyMs: c.latencyMs,
+        lastPingedAt: c.lastPingedAt,
         subscriptionId: newSubId,
         ssPrefix: c.ssPrefix,
         obfsPassword: c.obfsPassword,
+        allowInsecure: c.allowInsecure,
+        pinSHA256: c.pinSHA256,
         xhttpMode: c.xhttpMode,
         xhttpExtra: c.xhttpExtra,
+        finalmask: c.finalmask,
+        alpn: c.alpn,
+        ech: c.ech,
+        rawXrayConfig: c.rawXrayConfig,
       );
     }).toList();
 
@@ -382,7 +397,11 @@ class ConfigNotifier extends AsyncNotifier<ConfigState> {
       subscriptions: updatedSubs,
     ));
 
-    if (state.value?.activeConfigId == null && newConfigs.isNotEmpty) {
+    final noActive = state.maybeWhen(
+      data: (d) => d.activeConfigId == null,
+      orElse: () => false,
+    );
+    if (noActive && newConfigs.isNotEmpty) {
       await setActiveConfig(newConfigs.first.id);
     }
 
