@@ -22,6 +22,8 @@ class WindowsXrayEngine implements VpnEngine {
   Timer? _statsTimer;
   DateTime? _connectedAt;
   Function()? onCrashed;
+  StreamSubscription<String>? _stdoutSub;
+  StreamSubscription<String>? _stderrSub;
 
   bool get isRunning => _isRunning;
 
@@ -162,23 +164,19 @@ class WindowsXrayEngine implements VpnEngine {
 
     _logFilePath = '${workDir.path}\\vpn_log.txt';
 
-    _xrayProcess = await Process.start(
+    final proc = await Process.start(
       _xrayPath,
       ['run', '-c', configFile.path],
       workingDirectory: workDir.path,
       mode: ProcessStartMode.normal,
     );
+    _xrayProcess = proc;
 
     _connectedAt = DateTime.now();
 
-    // Watch stdout/stderr for log output and crash detection
-    _xrayProcess!.stdout.transform(utf8.decoder).listen((data) {
-      _parseAndAppendLog(data);
-    });
-    _xrayProcess!.stderr.transform(utf8.decoder).listen((data) {
-      _parseAndAppendLog(data);
-    });
-    _xrayProcess!.exitCode.then((code) {
+    _stdoutSub = proc.stdout.transform(utf8.decoder).listen(_parseAndAppendLog);
+    _stderrSub = proc.stderr.transform(utf8.decoder).listen(_parseAndAppendLog);
+    proc.exitCode.then((code) {
       final wasRunning = _isRunning;
       _isRunning = false;
       _statsTimer?.cancel();
@@ -189,21 +187,18 @@ class WindowsXrayEngine implements VpnEngine {
 
     // Wait for xray to actually bind the port (up to 5s)
     AppLogger.log('ENGINE', 'waiting for port $_socksPort...');
-    final bound = await _waitForPort(_socksPort, const Duration(seconds: 5));
+    var bound = await _waitForPort(_socksPort, const Duration(seconds: 5));
     if (!bound) {
       AppLogger.log('ENGINE', 'port $_socksPort NOT bound after 5s');
-      // xray didn't bind — check if it crashed
-      if (_xrayProcess != null) {
-        final code = await _xrayProcess!.exitCode;
-        AppLogger.log('ENGINE', 'xray exited with code $code');
-        throw Exception('xray exited with code $code — port $_socksPort not available');
-      }
       // Process still alive but port not bound yet — give it more time
-      final bound2 = await _waitForPort(_socksPort, const Duration(seconds: 3));
-      if (!bound2) {
-        AppLogger.log('ENGINE', 'port $_socksPort NOT bound after 8s');
-        throw Exception('xray started but port $_socksPort not listening after 8s');
-      }
+      bound = await _waitForPort(_socksPort, const Duration(seconds: 3));
+    }
+    if (!bound) {
+      AppLogger.log('ENGINE', 'port $_socksPort NOT bound after 8s');
+      final code = await proc.exitCode;
+      AppLogger.log('ENGINE', 'xray exit code $code');
+      await _killProcess(proc);
+      throw Exception('xray exited with code $code — port $_socksPort not available');
     }
     AppLogger.log('ENGINE', 'port $_socksPort bound OK');
 
@@ -212,7 +207,7 @@ class WindowsXrayEngine implements VpnEngine {
     // For TUN mode: manually add routes since autoRoute doesn't work on Windows
     if (!options.proxyOnly) {
       AppLogger.log('ENGINE', 'setting up TUN routes...');
-      await _setupTunRoutes();
+      await _setupTunRoutes(configJson);
     }
 
     AppLogger.log('ENGINE', 'connect() complete');
@@ -222,7 +217,7 @@ class WindowsXrayEngine implements VpnEngine {
   int? _tunIfIndex;
   String? _originalGateway;
 
-  Future<void> _setupTunRoutes() async {
+  Future<void> _setupTunRoutes(String configJson) async {
     try {
       // Find TUN adapter index — try "xray0" first, then "xray"
       AppLogger.log('TUN', 'finding TUN adapter...');
@@ -268,6 +263,7 @@ class WindowsXrayEngine implements VpnEngine {
 
       // CRITICAL: Add /32 route for proxy server via physical gateway BEFORE TUN routes
       // This ensures xray's own outbound to the proxy server bypasses TUN (prevents routing loop)
+      _proxyAddress = _extractProxyAddress(configJson);
       final proxyAddr = _proxyAddress;
       if (proxyAddr != null && _originalGateway != null && physIfIndex != null) {
         AppLogger.log('TUN', 'adding bypass route for proxy $proxyAddr via $_originalGateway on ifIndex $physIfIndex');
@@ -342,12 +338,12 @@ class WindowsXrayEngine implements VpnEngine {
     }
   }
 
-  String? get _proxyAddress {
+  String? _proxyAddress;
+
+  String? _extractProxyAddress(String configJson) {
     try {
-      final cfg = File('${AppLogger.logDir.path}\\teapod_xray_config.json');
-      if (!cfg.existsSync()) return null;
       final json = Map<String, dynamic>.from(
-          (jsonDecode(cfg.readAsStringSync()) as Map).map((k, v) => MapEntry(k.toString(), v)));
+          (jsonDecode(configJson) as Map).map((k, v) => MapEntry(k.toString(), v)));
       final outbounds = json['outbounds'] as List? ?? [];
       for (final ob in outbounds) {
         if (ob is! Map) continue;
@@ -392,12 +388,11 @@ class WindowsXrayEngine implements VpnEngine {
 
   Future<bool> _isPortListening(int port) async {
     try {
-      final result = await Process.run('netstat', ['-ano']);
-      final output = result.stdout as String;
-      final listening = output.split('\n').where(
-        (line) => line.contains(':$port') && line.contains('LISTENING'),
-      );
-      return listening.isNotEmpty;
+      final result = await Process.run('powershell', [
+        '-NoProfile', '-Command',
+        'Get-NetTCPConnection -LocalPort $port -State Listen 2>\$null | Select-Object -First 1'
+      ]);
+      return (result.stdout as String).trim().isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -408,8 +403,10 @@ class WindowsXrayEngine implements VpnEngine {
     for (final line in data.split('\n')) {
       if (line.trim().isEmpty) continue;
       try {
-        final f = File(_logFilePath!);
-        f.writeAsStringSync('${DateTime.now().millisecondsSinceEpoch}|info|$line\n', mode: FileMode.append);
+        File(_logFilePath!).writeAsStringSync(
+          '${DateTime.now().millisecondsSinceEpoch}|info|$line\n',
+          mode: FileMode.append,
+        );
       } catch (_) {}
     }
   }
@@ -426,21 +423,19 @@ class WindowsXrayEngine implements VpnEngine {
   Future<void> disconnect() async {
     _statsTimer?.cancel();
     _connectedAt = null;
+    onCrashed = null;
+
+    _stdoutSub?.cancel();
+    _stderrSub?.cancel();
+    _stdoutSub = null;
+    _stderrSub = null;
 
     // Remove TUN routes first (while xray0 adapter still exists)
     await _removeTunRoutes();
 
     // Kill xray process tree on Windows
     if (_xrayProcess != null) {
-      final pid = _xrayProcess!.pid;
-      try {
-        await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
-      } catch (_) {
-        try { _xrayProcess!.kill(); } catch (_) {}
-      }
-      try {
-        await _xrayProcess!.exitCode.timeout(const Duration(seconds: 3), onTimeout: () => -1);
-      } catch (_) {}
+      await _killProcess(_xrayProcess!);
       _xrayProcess = null;
     }
 
@@ -452,6 +447,18 @@ class WindowsXrayEngine implements VpnEngine {
     _isRunning = false;
     _tunIfIndex = null;
     _originalGateway = null;
+  }
+
+  Future<void> _killProcess(Process proc) async {
+    final pid = proc.pid;
+    try {
+      await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
+    } catch (_) {
+      try { proc.kill(); } catch (_) {}
+    }
+    try {
+      await proc.exitCode.timeout(const Duration(seconds: 3), onTimeout: () => -1);
+    } catch (_) {}
   }
 
   @override

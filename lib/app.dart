@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -97,9 +98,11 @@ class _AppShellState extends ConsumerState<_AppShell>
       _scheduleUpdateCheck();
     });
 
-    _deeplinkSubscription = _eventChannel
-        .receiveBroadcastStream()
-        .listen(_handleEvent);
+    if (Platform.isAndroid) {
+      _deeplinkSubscription = _eventChannel
+          .receiveBroadcastStream()
+          .listen(_handleEvent);
+    }
   }
 
   @override
